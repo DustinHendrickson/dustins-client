@@ -184,3 +184,25 @@ target_link_libraries(Wow
         WowServices
         WowSvcs
 )
+
+# On Android, libwow.so is loaded by WowActivity (Tools/Android), which Tools/Android/build.sh packages with it into an
+# APK. It keeps its symbols out of the APK's copy: crash logs give addresses as offsets into the build tree's copy.
+if (WOWDECOMP_PLATFORM_ANDROID)
+    # The commit a build came from, printed at the top of Logs/Console.txt.
+    execute_process(
+        COMMAND git -c safe.directory=* rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE WOWDECOMP_BUILD_ID
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if (NOT WOWDECOMP_BUILD_ID)
+        set(WOWDECOMP_BUILD_ID unknown)
+    endif ()
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Android/main.cpp PROPERTIES COMPILE_DEFINITIONS WOWDECOMP_BUILD_ID="${WOWDECOMP_BUILD_ID}")
+
+    target_link_libraries(Wow PRIVATE android EGL GLESv3 log)
+
+    # NativeActivity finds ANativeActivity_onCreate by name; an undefined symbol must fail the link, not the start.
+    target_link_options(Wow PRIVATE "-Wl,--no-undefined" "-Wl,-u,ANativeActivity_onCreate")
+endif ()

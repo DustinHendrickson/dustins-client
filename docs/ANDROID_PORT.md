@@ -12,14 +12,14 @@ USB / Bluetooth keyboards and mice as extras. It follows the macOS and Switch po
 | Game data | A folder the player can reach: `/sdcard/WoW335/` by default (`Data/`, `WTF/`, `Interface/AddOns/`, `Logs/`), with **All files access** (`MANAGE_EXTERNAL_STORAGE`) | Copying 17 GB and add-ons from a PC or a file manager must be easy. Sideloaded APK only: Google Play doesn't allow that permission for this |
 | Touch | **Hybrid**: floating joystick on the left, camera drag on the right, pinch to zoom, tap to click anything (action bars, windows, units), long press to right-click, and a few overlay buttons that work while moving and looking | Combat needs moving, looking and pressing at once; WoW's own action bars are already the best ability buttons |
 | Testing | The Android emulator on this Mac (arm64 images run natively on Apple Silicon) for automated checks, and the user's phone for real touch, performance and GPU drivers | |
-| App shell | `NativeActivity` (no Java of our own), with JNI calls for the soft keyboard, permissions and insets | No Gradle or AndroidX needed; the APK is built from the native library, the manifest and assets |
+| App shell | `WowActivity`, a small `NativeActivity` subclass (Tools/Android/java), with JNI calls into it for dialogs, the keyboard, storage access, the clipboard and insets | No Gradle or AndroidX needed; `javac` and `d8` build the one class, and the APK is assembled from it, the native library and the manifest |
 | Minimum | Android 11 (API 30), arm64-v8a, OpenGL ES 3.0 | All files access exists from Android 11 |
 
 ## How it fits the tree
 
 - **CMake**: `cmake/AndroidToolchain.cmake` wraps the NDK's toolchain. `WOWDECOMP_PLATFORM_ANDROID` and
   `WOWDECOMP_PLATFORM_POSIX`. `wowdecomp_platform_sources` keeps `Mac/` folders and lets an `Android/` file replace the
-  `Mac/` one of the same name, as `Switch/` does. The game builds as `libwow.so`, loaded by `NativeActivity`.
+  `Mac/` one of the same name, as `Switch/` does. The game builds as `libwow.so`, loaded by `WowActivity`.
 - **Os** (`Engine/Source/Os/Android/`): the window is the activity's `ANativeWindow`; input comes from the activity's
   input queue (multi-touch, gamepads, keyboards, mice); the clipboard, soft keyboard and system bars through JNI.
 - **Files**: BlizzardCore's and Storm's POSIX file layers as on macOS, rooted at the game folder. Android's shared
@@ -98,8 +98,12 @@ Gamepads use the Switch port's mapping (play / cursor modes, the D-pad menu navi
 
 - **Milestone 1 (tooling): done.** JDK 17 (Homebrew), the SDK command-line tools, platform 35, build tools 35, NDK
   27.2, the emulator and an Android 15 arm64 image; the virtual device `wowtest` (Pixel 7).
-- **Milestone 2 (boots): in progress.** `cmake -S . -B build/android -G Ninja
-  -DCMAKE_TOOLCHAIN_FILE=cmake/AndroidToolchain.cmake` configures, and every shared library compiles. Linking
-  `libwow.so` still needs the Android Os layer (input, window, clipboard, message boxes), the entry point and the GLES
-  device: 33 symbols. Done so far on the Android side: the AAudio output, crash reports (signals into the Switch's
-  crash context and machine-state log), the Registry.txt store, and the adapter's display modes.
+- **Milestone 2 (boots): done.** `Tools/Android/build.sh` builds `bin/Android/WoW.apk` (`install` also installs and
+  starts it over adb). On the `wowtest` emulator the app asks for All files access through the system page, says
+  where to put the Data folder when it is missing, loads the archives, runs Lua and the glue UI, and starts drawing
+  the login scene: the GLES device so far creates its EGL context, follows the window through the background, and
+  clears and presents. It stops at the first shader effect, which milestone 3 provides.
+  - The NDK's `_FORTIFY_SOURCE` is off (cmake/Platform.cmake): it aborts on strings stored after their header, as
+    Lua's are.
+  - The emulator can't hold the full 3.3.5a Data folder on a Mac short of disk space (its data partition was cut to
+    4 GB). For a boot test, the large archives can be empty stand-ins; the game opens them and goes on.

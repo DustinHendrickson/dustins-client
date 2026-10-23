@@ -108,10 +108,12 @@ macro (wowdecomp_mac_compile_options)
         include_directories(BEFORE SYSTEM ${CMAKE_SOURCE_DIR}/Engine/Source/Base/Compat/Switch)
     endif ()
     # Darwin headers the shared Mac/ layers include that bionic lacks (<crt_externs.h>), for Android. The NDK makes
-    # non-literal format strings an error; Storm's printf wrappers pass theirs through, as on macOS.
+    # non-literal format strings an error; Storm's printf wrappers pass theirs through, as on macOS. Its
+    # _FORTIFY_SOURCE=2 is off: it takes a string stored after its header (Lua's TString, ts + 1) for a read past the
+    # header and aborts, and the game keeps strings that way throughout. macOS and the Switch don't fortify either.
     if (WOWDECOMP_PLATFORM_ANDROID)
         include_directories(BEFORE SYSTEM ${CMAKE_SOURCE_DIR}/Engine/Source/Base/Compat/Android)
-        add_compile_options(-Wno-error=format-security)
+        add_compile_options(-Wno-error=format-security -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0)
     endif ()
     # arm64: <xmmintrin.h> / <emmintrin.h> resolve to sse2neon wrappers.
     if (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR WOWDECOMP_PLATFORM_SWITCH OR WOWDECOMP_PLATFORM_ANDROID)
