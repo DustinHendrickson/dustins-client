@@ -34,28 +34,35 @@ USB / Bluetooth keyboards and mice as extras. It follows the macOS and Switch po
 
 ## The OpenGL ES device
 
-`CGxDeviceGLES` derives from `CGxDevice` like the OpenGL and Direct3D devices, reusing the base class's state
-tracking, buffer pools and texture management. What differs from the desktop OpenGL device:
+Android runs the same OpenGL device as macOS and the Switch (`CGxDeviceOpenGL`), unchanged. What differs is the GL
+under it: Android has OpenGL ES 3 only, so `CGxDeviceOpenGL/Android` carries out the ~120 desktop GL 1.x and extension
+entry points the device calls on ES 3 (`GlExt.h` includes `Android/GlAndroid.h` in place of `<OpenGL/gl.h>`). Every
+fix to the device then serves all three platforms.
 
-- **Fixed function as generated shaders.** The state the game sets through the fixed-function path (texture stage
-  combiners, alpha test, fog, up to 8 lights with color material, texture coordinate generation and matrices, point
-  sizes, clip planes) forms a key; each key gets a GLSL ES 3.00 vertex and fragment shader, compiled once and cached.
-  UI, particles, and anything drawn without the game's shaders go this way.
-- **ARB programs to GLSL ES.** The `.bls` shader files hold ARB assembly (`arbvp1` / `arbfp1`). A translator turns
-  each program into GLSL ES at load time (registers to locals, `program.env[n]` / `program.local[n]` to uniform
-  arrays, `state.*` bindings to uniforms the device keeps current, each opcode to its expression), keyed by the
-  program text and cached.
-- **Textures.** DXT1/3/5 use `EXT_texture_compression_s3tc` where the GPU has it; Mali and some others don't, so
-  there DXT is decoded to RGBA8 on load (a background thread, with the decoded size counted against memory). BGRA
-  formats are swizzled on upload. Mipmaps, anisotropy and depth comparison (shadows) are core ES 3.0.
-- **Draws.** Vertex buffer objects and `glDrawRangeElements` as on desktop, with vertex arrays bound through attribute
-  locations instead of client arrays. No immediate mode or quads to replace.
-- **Render targets** are framebuffer objects, as the macOS and Switch devices already use.
-- **Not available.** Wireframe (`glPolygonMode`) is dropped. User clip planes are done with `gl_ClipDistance`
-  (`EXT_clip_cull_distance`) or a discard.
-
-It can be developed and checked on the Android emulator, whose OpenGL ES goes to this Mac's GPU, with the game's
-own screenshots and `WOWDECOMP_FRAMEDUMP` as on macOS.
+- **Fixed function as generated shaders** (`GlAndroidPrograms.cpp`). The state set through the fixed-function path
+  (matrices, up to 8 lights with color material and separate specular, texture environments and combiners, coordinate
+  generation, fog, alpha test, point sizes and sprites) is tracked, and the part that changes code forms a key; each
+  key gets a GLSL ES 3.00 program, compiled once and cached. The rest are uniforms, uploaded per group when changed.
+- **ARB programs to GLSL ES** (`GlAndroidPrograms.cpp`). `glProgramStringARB` translates the game's `arbvp1` /
+  `arbfp1` programs (Cg output): every opcode they use, `_SAT`, swizzles and write masks, `A0` relative addressing of
+  parameter arrays, `ARB_fog_linear` and `ARB_fragment_program_shadow`. `program.env` is two uniform buffers that every
+  program shares. All 2,778 programs in the game's shader files translate, compile and link (checked on the emulator's
+  driver). Alpha test, which desktop GL applies after a fragment program, is appended to each.
+- **Stage linking.** A vertex stage is generated for its fragment stage and writes only the varyings it reads.
+- **Textures** (`GlAndroidTextures.cpp`). BGRA and the reversed 4444 / 1555 formats are converted on upload; DXT goes
+  to the GPU where it has S3TC and is decoded to RGBA where it doesn't (most phones, and the emulator).
+  `GL_GENERATE_MIPMAP` becomes `glGenerateMipmap`.
+- **Render targets** take the device's copy path as on macOS: a pbuffer framebuffer object, copied into textures.
+  The copies are framebuffer blits: ES copies no depth with `glCopyTex*`, and drivers refuse color copies between
+  formats (the window is RGB, the game's textures RGBA), some silently.
+- **Not available:** wireframe, occlusion queries (ES 3 counts no samples; the device falls back), rectangle textures
+  (ARB `RECT` lookups sample 2D textures), user clip planes (the device uses none with vertex programs), and reading
+  depth back (`glReadPixels` reports the far plane).
+- **Window** (`Android/MacGlContext.cpp`): EGL with an ES 3 context; the surface is made at the game's render size on
+  the activity's window and dropped while the app is in the background, when the game keeps running at a slow tick.
+- **Diagnostics:** `adb shell setprop debug.wow.gl 1` logs draw counts and GL errors once a second;
+  `debug.wow.gltrace N` also traces every draw of N frames, checks render-target copies, and writes the generated
+  programs to `Logs/gl-programs.txt`.
 
 ## Touch and small screens
 
@@ -107,3 +114,7 @@ Gamepads use the Switch port's mapping (play / cursor modes, the D-pad menu navi
     Lua's are.
   - The emulator can't hold the full 3.3.5a Data folder on a Mac short of disk space (its data partition was cut to
     4 GB). For a boot test, the large archives can be empty stand-ins; the game opens them and goes on.
+- **Milestone 3 (draws): done.** The login screen renders correctly on the emulator: the interface, and the
+  Icecrown scene with its skinned models, particles, lighting, fog and glow. (The emulator test used a trimmed
+  `common.MPQ` holding the shaders and the scene's textures, for want of disk space; the scene and interface come from
+  the locale archives.)

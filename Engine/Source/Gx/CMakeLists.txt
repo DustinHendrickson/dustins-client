@@ -2,17 +2,11 @@ file(GLOB_RECURSE PRIVATE_SOURCES CONFIGURE_DEPENDS "*.cpp")
 wowdecomp_platform_sources(PRIVATE_SOURCES)
 
 if (NOT WIN32)
-    # Direct3D is Windows only. The OpenGL device builds on macOS and the Switch with its platform code in
-    # CGxDeviceOpenGL/Mac (and Switch).
+    # Direct3D is Windows only. The OpenGL device builds on macOS, the Switch and Android with its platform code in
+    # CGxDeviceOpenGL/Mac (and Switch, Android: there on OpenGL ES 3).
     list(FILTER PRIVATE_SOURCES EXCLUDE REGEX "/CGxDevice(D3d|D3d9Ex)/")
 endif ()
 
-if (WOWDECOMP_PLATFORM_ANDROID)
-    # Android has OpenGL ES only: its own device (CGxDeviceGLES) takes the OpenGL device's place.
-    list(FILTER PRIVATE_SOURCES EXCLUDE REGEX "/CGxDeviceOpenGL/")
-else ()
-    list(FILTER PRIVATE_SOURCES EXCLUDE REGEX "/CGxDeviceGLES/")
-endif ()
 
 add_library(Gx STATIC
     ${PRIVATE_SOURCES}

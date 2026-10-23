@@ -28,6 +28,7 @@
 #include "Engine/Source/Os/Android/AndroidSystem.h"
 #include "Engine/Source/Os/Gui.h"
 #include "Engine/Source/Os/Input.h"
+#include "Engine/Source/Os/Mac/OsMacWindow.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Storm/H/storm.h"
 
@@ -109,6 +110,13 @@ TouchState s_touchState;
 int32_t s_touchId = -1;
 C2iVector s_touchStart;
 uint64_t s_touchStartMs;
+
+// The game window (OsMacWindow.h): the activity's, at the render size the game asked for, and the device's listener for
+// focus and the app going to the background.
+int32_t s_window;
+OsMacWindowListener s_listener;
+void* s_listenerParam;
+uint32_t s_windowGeneration;
 
 // Text input.
 bool s_textFocus;
@@ -453,6 +461,12 @@ void HandleKey(const RawEvent& event) {
     }
 }
 
+void Notify(OsMacWindowEvent event) {
+    if (s_listener) {
+        s_listener(s_listenerParam, event);
+    }
+}
+
 bool TextMode() {
     return s_textFocus || s_secureFocus;
 }
@@ -523,6 +537,7 @@ void Poll() {
 
         if (s_pendingFocus >= 0) {
             OsQueuePut(OS_INPUT_FOCUS, s_pendingFocus, 0, 0, 0);
+            Notify(s_pendingFocus ? OsMacWindowEvent_FocusGained : OsMacWindowEvent_FocusLost);
             s_pendingFocus = -1;
         }
 
@@ -544,6 +559,15 @@ void Poll() {
                 HandleMouse(event);
                 break;
         }
+    }
+
+    // The app went to the background (no window) or came back: the device stops drawing meanwhile.
+    uint32_t generation;
+    bool window = AndroidGetWindow(&generation) != nullptr;
+
+    if (generation != s_windowGeneration) {
+        s_windowGeneration = generation;
+        Notify(window ? OsMacWindowEvent_Restored : OsMacWindowEvent_Minimized);
     }
 
     PollTouchHold(now);
@@ -838,4 +862,73 @@ int32_t AndroidIsModifierDown(int32_t modifier) {
         default:
             return 0;
     }
+}
+
+void OsMacInitializeApplication() {
+}
+
+void* OsMacCreateGameWindow(const char* title, int32_t x, int32_t y, int32_t width, int32_t height) {
+    int32_t screenWidth;
+    int32_t screenHeight;
+    AndroidGetScreenSize(&screenWidth, &screenHeight);
+
+    AndroidInputSetRenderSize(width > 0 ? width : screenWidth, height > 0 ? height : screenHeight);
+    AndroidGetWindow(&s_windowGeneration);
+    s_window = 1;
+
+    return &s_window;
+}
+
+void* OsMacGetGameView(void* window) {
+    return window;
+}
+
+float OsMacGetBackingScale(void* window) {
+    return 1.0f;
+}
+
+float OsMacGetRenderScale(void* window) {
+    return 1.0f;
+}
+
+void OsMacDestroyGameWindow(void* window) {
+    if (!window) {
+        return;
+    }
+
+    if (OsGuiGetWindow(0) == window) {
+        OsInputSetMouseMode(OS_MOUSE_MODE_NORMAL);
+        OsGuiSetGxWindow(nullptr);
+    }
+
+    s_window = 0;
+    s_listener = nullptr;
+}
+
+void OsMacSetSystemCursorHidden(void* window, bool hidden) {
+}
+
+void OsMacSetGameCursor(void* window, const uint32_t* pixels, int32_t hotspotX, int32_t hotspotY) {
+}
+
+void OsMacGetContentSize(void* window, int32_t* width, int32_t* height) {
+    *width = s_contentWidth;
+    *height = s_contentHeight;
+}
+
+void OsMacGetContentScreenOrigin(void* window, int32_t* x, int32_t* y) {
+    *x = 0;
+    *y = 0;
+}
+
+void OsMacSetWindowFullscreen(void* window, bool fullscreen, int32_t width, int32_t height) {
+    // The game fills the screen at the size asked for, which the display scales; the surface is made after this.
+    if (width > 0 && height > 0) {
+        AndroidInputSetRenderSize(width, height);
+    }
+}
+
+void OsMacSetWindowListener(void* window, OsMacWindowListener listener, void* param) {
+    s_listener = listener;
+    s_listenerParam = param;
 }

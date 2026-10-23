@@ -1,5 +1,5 @@
 // Android implementation of the adapter queries in Gx/CGxDevice/Win64/CGxDevice.cpp, and the Direct3D device
-// factories, which return nullptr: OpenGL ES (the CGxDeviceGLES device, in the OpenGL slot) is the only API.
+// factories, which return nullptr: OpenGL (the OpenGL device, on OpenGL ES 3: CGxDeviceOpenGL/Android) is the only API.
 //
 // The screen is the activity's window (Os/Android). Phone screens are large (2400x1080 and up) for a GPU that also
 // drives them, so besides the native size the modes offer smaller ones of the same shape, which Android's hardware
@@ -35,27 +35,8 @@ int32_t CGxDevice::AdapterFormats(EGxApi api, TSGrowableArray<CGxFormat>& format
         return 0;
     }
 
-    // What EGL configs on OpenGL ES 3 devices offer: 8-bit color with or without alpha, 24-bit depth with or without
-    // stencil or 16-bit depth, and up to 4x multisampling.
-    static const CGxFormat::Format colorFormats[] = { CGxFormat::Fmt_Argb8888, CGxFormat::Fmt_ArgbX888 };
-    static const CGxFormat::Format depthFormats[] = { CGxFormat::Fmt_Ds248, CGxFormat::Fmt_Ds24X, CGxFormat::Fmt_Ds160 };
-    static const uint32_t sampleCounts[] = { 1, 2, 4 };
-
-    for (CGxFormat::Format color : colorFormats) {
-        for (CGxFormat::Format depth : depthFormats) {
-            for (uint32_t samples : sampleCounts) {
-                CGxFormat format;
-                memset(&format, 0, sizeof(format));
-                format.m_colorFormat = color;
-                format.m_depthFormat = depth;
-                format.m_multisampleCount = samples;
-
-                if (!CGxDevice::FormatExists(formats, format)) {
-                    *formats.New() = format;
-                }
-            }
-        }
-    }
+    // The EGL configs OpenGL ES 3 devices offer are those of the macOS list (CGxDeviceOpenGlMac.inl).
+    CGxDevice::OpenGlAdapterFormats(formats);
 
     return formats.Count() != 0;
 }

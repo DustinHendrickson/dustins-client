@@ -9,7 +9,7 @@
 //
 // The Switch shares this file: its Os layer implements the same window interface for the console's screen, and its
 // MacGlContext / GlMac functions are EGL ones (CGxDeviceOpenGL/Switch). It has no system cursor, so the device draws
-// the game's.
+// the game's. So does Android, on OpenGL ES 3 (CGxDeviceOpenGL/Android).
 
 #include <algorithm>
 #include "Engine/Source/Gx/CGxDeviceOpenGL/Mac/MacGlContext.h"
@@ -34,8 +34,8 @@ CRect ContentRect(void* window) {
 
 // Fullscreen, and the two borderless "maximized" modes Windows creates as WS_POPUP windows over the screen.
 bool IsFullscreen(const CGxFormat& format) {
-#if defined(__SWITCH__)
-    // The game always fills the Switch's screen.
+#if defined(__SWITCH__) || defined(__ANDROID__)
+    // The game always fills the Switch's or the phone's screen.
     return true;
 #endif
 

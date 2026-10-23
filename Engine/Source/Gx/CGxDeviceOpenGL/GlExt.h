@@ -6,6 +6,9 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <GL/gl.h>
+#elif defined(__ANDROID__)
+// OpenGL ES 3, with the desktop entry points the device calls carried out on it (CGxDeviceOpenGL/Android/GlAndroid.h).
+#include "Engine/Source/Gx/CGxDeviceOpenGL/Android/GlAndroid.h"
 #elif defined(__SWITCH__)
 // Mesa's headers; its compatibility-profile entry points are reached through eglGetProcAddress
 // (CGxDeviceOpenGL/Switch/GlSwitchEntryPoints.cpp). glext.h comes with gl.h, without prototypes.
