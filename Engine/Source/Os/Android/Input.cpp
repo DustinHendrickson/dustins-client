@@ -52,6 +52,8 @@ const int32_t kQueueSize = 512;
 // Touch: how far a finger moves before it drags rather than taps, in pixels at the render size, and how long it is
 // held still to right-click.
 const int32_t kTouchSlop = 12;
+// On a button the slop is wider: a thumb pressing a button wobbles more than one tapping the world.
+const int32_t kButtonSlop = 36;
 const uint64_t kTouchHoldMs = 500;
 
 // Fingers followed at once.
@@ -164,6 +166,7 @@ struct Finger {
     int32_t key = KEY_NONE;     // Finger_Key: the key it holds, and its modifiers, and the control's name
     uint32_t modifiers = 0;
     std::string control;
+    bool onLift = false;        // Finger_Key: its key goes down and up when it lifts, not while it's down
 };
 
 // Overlay controls, set by the TouchControls add-on (AndroidInputSetKeyControl, AndroidInputSetJoystick).
@@ -176,6 +179,7 @@ struct Control {
     bool joystick;
     int32_t key;
     uint32_t modifiers;
+    uint32_t flags;     // AndroidInputControlFlag
 };
 
 std::vector<Control> s_controls;
@@ -473,6 +477,17 @@ const Control* ControlAt(const C2iVector& point) {
 
     for (auto control = s_controls.rbegin(); control != s_controls.rend(); ++control) {
         if (x >= control->left && x <= control->right && y >= control->bottom && y <= control->top) {
+            if (control->flags & AndroidInputControl_Round) {
+                // In pixels, where the circle is round.
+                float dx = (x - (control->left + control->right) * 0.5f) * static_cast<float>(s_contentWidth);
+                float dy = (y - (control->bottom + control->top) * 0.5f) * static_cast<float>(s_contentHeight);
+                float radius = (control->right - control->left) * 0.5f * static_cast<float>(s_contentWidth);
+
+                if (dx * dx + dy * dy > radius * radius) {
+                    continue;
+                }
+            }
+
             return &*control;
         }
     }
@@ -598,7 +613,11 @@ void FingerDown(int32_t id, const C2iVector& point, uint64_t now) {
             finger->key = control->key;
             finger->modifiers = control->modifiers;
             finger->control = control->name;
-            PutControlKey(finger->key, finger->modifiers, true);
+            finger->onLift = (control->flags & AndroidInputControl_OnLift) != 0;
+
+            if (!finger->onLift) {
+                PutControlKey(finger->key, finger->modifiers, true);
+            }
         }
 
         return;
@@ -639,6 +658,33 @@ void FingerDown(int32_t id, const C2iVector& point, uint64_t now) {
     }
 
     finger->role = Finger_Ignored;
+}
+
+// Further than a tap's wobble from where it landed on a button: a drag, which turns the camera.
+bool BeyondButtonSlop(const Finger& finger) {
+    return std::abs(finger.position.x - finger.start.x) > kButtonSlop || std::abs(finger.position.y - finger.start.y) > kButtonSlop;
+}
+
+void ButtonToCamera(Finger& finger, const C2iVector& point) {
+    if (!finger.onLift) {
+        PutControlKey(finger.key, finger.modifiers, false);
+    }
+
+    finger.control.clear();
+
+    // The mouse is another finger's: nothing for this one.
+    if (s_mouseFinger >= 0) {
+        finger.role = Finger_Ignored;
+        return;
+    }
+
+    Trace("finger %d dragged off its button: camera", finger.id);
+    s_mouseFinger = FingerIndex(&finger);
+    MoveMouseTo(finger.start);
+    PutMouseButton(MOUSE_BUTTON_RIGHT, true);
+    finger.role = Finger_Camera;
+    s_lookX = static_cast<float>(point.x - finger.start.x) * s_cameraSpeed;
+    s_lookY = static_cast<float>(point.y - finger.start.y) * s_cameraSpeed * (s_cameraInvert ? -1.0f : 1.0f);
 }
 
 // A finger on the world: a tap left-clicks there (selects), a hold right-clicks (talk, loot, attack).
@@ -701,6 +747,14 @@ void FingerMove(Finger& finger, const C2iVector& point) {
 
         case Finger_Joystick:
             UpdateJoystick(finger);
+            break;
+
+        case Finger_Key:
+            // Dragged off its button: the camera turns from there (the button's key, if down, lets go first).
+            if (BeyondButtonSlop(finger)) {
+                ButtonToCamera(finger, point);
+            }
+
             break;
 
         case Finger_Pinch: {
@@ -771,7 +825,13 @@ void FingerUp(Finger& finger, bool cancel) {
             break;
 
         case Finger_Key:
-            PutControlKey(finger.key, finger.modifiers, false);
+            if (!finger.onLift) {
+                PutControlKey(finger.key, finger.modifiers, false);
+            } else if (!cancel) {
+                PutControlKey(finger.key, finger.modifiers, true);
+                PutControlKey(finger.key, finger.modifiers, false);
+            }
+
             break;
 
         case Finger_Joystick:
@@ -1407,8 +1467,8 @@ void AndroidInputSetRenderSize(int32_t width, int32_t height) {
 
 namespace {
 
-void SetControl(const char* name, float left, float bottom, float right, float top, bool joystick, int32_t key, uint32_t modifiers) {
-    Control control = { name ? name : "", left, bottom, right, top, joystick, key, modifiers };
+void SetControl(const char* name, float left, float bottom, float right, float top, bool joystick, int32_t key, uint32_t modifiers, uint32_t flags) {
+    Control control = { name ? name : "", left, bottom, right, top, joystick, key, modifiers, flags };
 
     for (Control& existing : s_controls) {
         if (existing.name == control.name) {
@@ -1443,12 +1503,12 @@ void UpdateGestureExclusion() {
 
 }
 
-void AndroidInputSetKeyControl(const char* name, float left, float bottom, float right, float top, int32_t key, uint32_t modifiers) {
-    SetControl(name, left, bottom, right, top, false, key, modifiers);
+void AndroidInputSetKeyControl(const char* name, float left, float bottom, float right, float top, int32_t key, uint32_t modifiers, uint32_t flags) {
+    SetControl(name, left, bottom, right, top, false, key, modifiers, flags);
 }
 
 void AndroidInputSetJoystick(const char* name, float left, float bottom, float right, float top) {
-    SetControl(name, left, bottom, right, top, true, KEY_NONE, 0);
+    SetControl(name, left, bottom, right, top, true, KEY_NONE, 0, 0);
     UpdateGestureExclusion();
 }
 

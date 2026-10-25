@@ -54,14 +54,21 @@ void AndroidInputSetLowMemoryHandler(void (*handler)());
 // Overlay controls (the TouchControls add-on's, through WoW/Source/Ui/Android/TouchControls.cpp): screen areas a finger
 // landing in belongs to, before the UI and the world. Areas are fractions of the screen from its bottom left, as the
 // game's UI measures. A key control holds its key (with Shift, Ctrl or Alt) down while the finger is; the joystick
-// sends the movement keys from where the finger moved since it landed. Setting a name again replaces it.
+// sends the movement keys from where the finger moved since it landed. Setting a name again replaces it. A finger
+// dragged off a key control turns the camera instead (the right thumb's cluster is also where it turns from).
 enum AndroidInputModifier {
     AndroidInputModifier_Shift = 1,
     AndroidInputModifier_Ctrl = 2,
     AndroidInputModifier_Alt = 4,
 };
 
-void AndroidInputSetKeyControl(const char* name, float left, float bottom, float right, float top, int32_t key, uint32_t modifiers);
+enum AndroidInputControlFlag {
+    AndroidInputControl_Round = 1,      // the circle in the area, not the whole of it: the gaps around are the world's
+    AndroidInputControl_OnLift = 2,     // pressed when the finger lifts without dragging, not when it lands, so a drag
+                                        // to turn the camera presses nothing (the game casts on the key's release anyway)
+};
+
+void AndroidInputSetKeyControl(const char* name, float left, float bottom, float right, float top, int32_t key, uint32_t modifiers, uint32_t flags);
 void AndroidInputSetJoystick(const char* name, float left, float bottom, float right, float top);
 void AndroidInputRemoveControl(const char* name);
 void AndroidInputClearControls();

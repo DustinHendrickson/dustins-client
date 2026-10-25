@@ -1,7 +1,7 @@
 // The game's side of Android's touch controls (TouchControls.h): what the native input layer needs from the UI to
 // route fingers, and the Lua functions of the TouchControls add-on (Tools/Android/assets/AddOns/TouchControls):
 //
-//   TouchControls_SetControl(name, left, bottom, right, top, key)
+//   TouchControls_SetControl(name, left, bottom, right, top, key[, flags])
 //                                   an overlay control: a finger landing in the area (fractions of the screen from its
 //                                   bottom left) holds key down, a binding's name for one ("SPACE", "TAB", "SHIFT-2",
 //                                   "F13"), or is the joystick when key is "JOYSTICK". Setting a name again replaces it.
@@ -221,11 +221,23 @@ int32_t Script_TouchControls_SetControl(lua_State* L) {
         return 0;
     }
 
+    // Flags: "round" (the circle in the area), "lift" (pressed on the finger's lift).
+    const char* options = lua_tostring(L, 7);
+    uint32_t flags = 0;
+
+    if (options && strstr(options, "round")) {
+        flags |= AndroidInputControl_Round;
+    }
+
+    if (options && strstr(options, "lift")) {
+        flags |= AndroidInputControl_OnLift;
+    }
+
     uint32_t modifiers;
     int32_t code = ParseKey(key, &modifiers);
 
     if (code != KEY_NONE) {
-        AndroidInputSetKeyControl(name, left, bottom, right, top, code, modifiers);
+        AndroidInputSetKeyControl(name, left, bottom, right, top, code, modifiers, flags);
     } else {
         AndroidInputRemoveControl(name);
     }

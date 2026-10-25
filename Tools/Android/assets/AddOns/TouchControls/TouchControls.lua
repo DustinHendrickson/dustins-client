@@ -16,6 +16,7 @@ BINDING_NAME_TOUCHCONTROLS_INTERACT = "Interact with nearest"
 BINDING_NAME_TOUCHCONTROLS_TARGETNONHOSTILE = "Target nearest friendly or neutral"
 BINDING_NAME_TOUCHCONTROLS_TOGGLE = "Show or hide touch controls"
 BINDING_NAME_TOUCHCONTROLS_MENU = "Touch controls menu"
+BINDING_NAME_TOUCHCONTROLS_NEXTGROUP = "Touch controls: next buttons"
 
 local defaults = {
     style = "wheel",    -- "wheel": the thumb wheel; "bars": the default action bars
@@ -26,6 +27,7 @@ local defaults = {
     frameRate = 60,     -- 30 saves the battery
     cameraSpeed = 1,    -- the camera drag's turn per pixel
     cameraInvert = false,
+    wheelCount = 12,    -- the wheel's buttons on screen (WHEEL_LAYOUTS)
     graphicsChosen = false, -- whether the phone's graphics defaults have been set (once, then they're the player's)
     glowChosen = false, -- whether the full-screen glow has been turned off (once, likewise)
 }
@@ -35,11 +37,24 @@ local controls = {}         -- name -> { frame, key }: the areas the input layer
 local NUM_WHEEL = 12        -- the whole bar, keys 1 to =
 
 -- The layout, in fractions of the screen's height (sizes keep their shape at any UI scale and screen width).
-local CORNER = 0.19         -- the jump button's center, in from the bottom right corner
-local JUMP_SIZE = 0.145
-local SLOT_SIZE = 0.088     -- the wheel's buttons
-local SMALL_SIZE = 0.075    -- the other round buttons
-local WHEEL_ROWS = { 0.2, 0.315, 0.43 }  -- the wheel's three arcs, from the jump button's center
+local CORNER = 0.16         -- the jump button's center, in from the bottom right corner
+local JUMP_SIZE = 0.14
+local SMALL_SIZE = 0.072    -- the other round buttons
+-- The wheel packs into the corner, so the screen's right side above it is the world's, for the right thumb to turn
+-- the camera on. How many buttons it shows is an option: fewer are bigger, with more room between them, and the rest
+-- of the bar is a press of the page button away. Each layout's button size and arcs (radius from jump's center, how
+-- many, and from which angle to which, 90 straight up), every button clear of its neighbours by a fingertip.
+local WHEEL_LAYOUTS = {
+    [12] = { slot = 0.075, rows = { { radius = 0.24, count = 5 }, { radius = 0.37, count = 7 } } },
+    [8] = { slot = 0.09, rows = { { radius = 0.25, count = 3 }, { radius = 0.37, count = 5 } } },
+    [6] = { slot = 0.105, rows = { { radius = 0.25, count = 3 }, { radius = 0.385, count = 3, from = 116, to = 164 } } },
+    [4] = { slot = 0.12, rows = { { radius = 0.3, count = 4 } } },
+}
+local WHEEL_SIZES = { 4, 6, 8, 12 }
+local WHEEL_FROM, WHEEL_TO = 95, 185
+
+-- The keys the wheel shows: those after this many (a group of the bar, with fewer buttons than keys).
+local wheelOffset = 0
 local JOYSTICK_RADIUS = 0.11    -- a full push (Input.cpp kJoystickRadius)
 
 -- The art: the minimap's ring around a round icon (SetPortraitToTexture), on a dark disc.
@@ -80,8 +95,10 @@ local function Fractions(frame)
     return left * scale / screenWidth, bottom * scale / screenHeight, (left + width) * scale / screenWidth, (bottom + height) * scale / screenHeight
 end
 
-local function Register(name, frame, key)
-    controls[name] = { frame = frame, key = key }
+-- flags for the input layer: "round" (the circle in the frame), "lift" (pressed when the finger lifts, so dragging
+-- off the button turns the camera instead of pressing it).
+local function Register(name, frame, key, flags)
+    controls[name] = { frame = frame, key = key, flags = flags }
 end
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -223,15 +240,16 @@ Register("joystick", joystickArea, "JOYSTICK")
 
 local buttons = {}
 
-local function AddButton(name, icon, key)
+local function AddButton(name, icon, key, flags)
     local button = MakeRound("TouchControls" .. name, addon)
     SetRoundIcon(button, icon)
     buttons[name] = button
-    Register(name, button, key)
+    Register(name, button, key, flags or "round,lift")
     return button
 end
 
-AddButton("jump", "Interface\\Icons\\Ability_Rogue_Sprint", "SPACE")
+-- Jump jumps the moment it's touched (a drag from it still turns the camera after); the rest press on lift.
+AddButton("jump", "Interface\\Icons\\Ability_Rogue_Sprint", "SPACE", "round")
 AddButton("interact", "Interface\\Icons\\INV_Gauntlets_04", "F13")
 AddButton("targetEnemy", "Interface\\Icons\\Ability_Hunter_SniperShot", "TAB")
 AddButton("targetFriend", "Interface\\Icons\\Spell_Holy_HolyBolt", "F14")
@@ -276,7 +294,7 @@ for index = 1, NUM_WHEEL do
     slot.count:SetPoint("BOTTOMRIGHT", -2, 2)
 
     slots[index] = slot
-    Register("action" .. index, slot, nil)
+    Register("action" .. index, slot, nil, "round,lift")
 end
 
 -- The button keys index would press now: a vehicle's, a stance's or possession's bar, or the main bar.
@@ -426,7 +444,7 @@ local function SyncControls()
             local left, bottom, right, top = Fractions(frame)
 
             if left and not Covered(left, bottom, right, top) then
-                TouchControls_SetControl(name, left, bottom, right, top, control.key)
+                TouchControls_SetControl(name, left, bottom, right, top, control.key, control.flags)
                 sent = true
             end
         end
@@ -652,7 +670,20 @@ local cameraSlider = MakeSlider("TouchControlsMenuCamera", "Camera speed", 0.3, 
         TouchControls_SetCamera(db.cameraSpeed, db.cameraInvert)
     end, true)
 
-local displaySliders = { uiScaleSlider, textSlider, chatSlider, renderSlider, cameraSlider }
+-- Buttons on screen: fewer are bigger, the rest of the bar a press of the page button away.
+local wheelSlider = MakeSlider("TouchControlsMenuWheel", "Buttons on screen", 1, #WHEEL_SIZES, 1,
+    function(value) return tostring(WHEEL_SIZES[floor(value + 0.5)]) end,
+    function(value)
+        local count = WHEEL_SIZES[floor(value + 0.5)]
+
+        if count and count ~= db.wheelCount then
+            db.wheelCount = count
+            wheelOffset = 0
+            Refresh()
+        end
+    end, true)
+
+local displaySliders = { uiScaleSlider, textSlider, chatSlider, renderSlider, cameraSlider, wheelSlider }
 
 -- Battery saver: the game held to 30 frames a second.
 local batteryCheck = CreateFrame("CheckButton", "TouchControlsMenuBattery", displayHolder, "UICheckButtonTemplate")
@@ -692,6 +723,12 @@ local function UpdateSliders()
     invertCheck:SetChecked(db.cameraInvert)
     glowCheck:SetChecked(GetCVar("ffxGlow") == "1")
     cameraSlider:SetValue(db.cameraSpeed)
+
+    for index, count in ipairs(WHEEL_SIZES) do
+        if count == db.wheelCount then
+            wheelSlider:SetValue(index)
+        end
+    end
     updatingSliders = false
 end
 
@@ -919,9 +956,10 @@ local function PlaceTracker()
         return
     end
 
+    -- A short block beside the minimap: the screen's right side under it is left to the camera.
     local right = -(MinimapCluster and MinimapCluster:GetWidth() or 192) - 12
-    WatchFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", right, -ScreenHeight() * 0.17)
-    WatchFrame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", right, ScreenHeight() * 0.6)
+    WatchFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", right, -ScreenHeight() * 0.15)
+    WatchFrame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", right, ScreenHeight() * 0.68)
 end
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -964,24 +1002,43 @@ local function Layout()
     SizeRound(buttons.jump, height * JUMP_SIZE)
     PlaceAt(buttons.jump, centerX, centerY)
 
+    -- The page button in the corner itself, below and right of jump.
     SizeRound(buttons.page, height * SMALL_SIZE)
-    PlaceAt(buttons.page, centerX + height * 0.115, centerY - height * 0.115)
+    PlaceAt(buttons.page, centerX + height * 0.1, centerY - height * 0.1)
 
-    -- A fan of three rows of four, keys 1 to 4 closest, each row from just past straight up to just past straight left.
-    for index, slot in ipairs(slots) do
-        local radius = height * WHEEL_ROWS[floor((index - 1) / 4) + 1]
-        local angle = math.rad(97.5 + ((index - 1) % 4) * 30)
-        SizeRound(slot, height * SLOT_SIZE)
-        PlaceAt(slot, centerX + math.cos(angle) * radius, centerY + math.sin(angle) * radius)
+    -- The wheel's arcs in the chosen size, the first keys on the inner one; the buttons past it hidden.
+    local layout = WHEEL_LAYOUTS[db.wheelCount] or WHEEL_LAYOUTS[12]
+    local reach = 0
+    local index = 1
+
+    for _, row in ipairs(layout.rows) do
+        local from, to = row.from or WHEEL_FROM, row.to or WHEEL_TO
+        reach = max(reach, row.radius + layout.slot * 0.5)
+
+        for i = 1, row.count do
+            local slot = slots[index]
+            local angle = math.rad(row.count > 1 and from + (to - from) * (i - 1) / (row.count - 1) or (from + to) / 2)
+            SizeRound(slot, height * layout.slot)
+            PlaceAt(slot, centerX + math.cos(angle) * height * row.radius, centerY + math.sin(angle) * height * row.radius)
+            slot:Show()
+            index = index + 1
+        end
     end
 
-    -- Interact and the two targetings in a column left of the wheel, interact lowest.
-    local columnX = centerX - height * (wheel and 0.54 or 0.17)
-    local columnY = centerY - height * (wheel and 0.09 or 0.05)
+    for i = index, NUM_WHEEL do
+        slots[i]:Hide()
+    end
 
+    -- Interact and the two targetings in a row along the bottom, clear of the wheel's widest reach, interact nearest
+    -- the thumb. In the bars style, a column left of jump.
     for i, name in ipairs({ "interact", "targetEnemy", "targetFriend" }) do
         SizeRound(buttons[name], height * SMALL_SIZE)
-        PlaceAt(buttons[name], columnX, columnY + height * 0.11 * (i - 1))
+
+        if wheel then
+            PlaceAt(buttons[name], centerX - height * (reach + SMALL_SIZE * 0.5 + 0.04 + 0.1 * (i - 1)), height * 0.07)
+        else
+            PlaceAt(buttons[name], centerX - height * 0.17, centerY - height * 0.05 + height * 0.11 * (i - 1))
+        end
     end
 
     -- Chat, the menu and the show / hide toggle at the top, between the unit frames and the minimap.
@@ -1036,30 +1093,98 @@ local function Layout()
     PlaceTracker()
 end
 
+-- The wheel's buttons press the keys of the group it shows (ACTIONBUTTON1 to 12 from the offset).
+local function SetWheelKeys()
+    for index = 1, NUM_WHEEL do
+        local key = wheelOffset + index
+        controls["action" .. index].key = key <= NUM_WHEEL and GetBindingKey("ACTIONBUTTON" .. key) or nil
+    end
+end
+
 -- The page: the bar's, shown on the page button, which pages on (ACTIONPAGE1 to 6, SHIFT-1 to SHIFT-6 by default) to
 -- the next page with anything on it.
+-- Whether keys 1 to = are on a vehicle's bar, which no page changes (a form's or possession's bar takes the place of
+-- page 1 only, GroupUsed).
+local function OtherBar()
+    return VehicleMenuBar and VehicleMenuBar:IsShown()
+end
+
+-- The bar's keys in groups the wheel's size (12 keys in 2 groups of 6, or 3 of 4, ...).
+local function WheelGroups()
+    return ceil(NUM_WHEEL / db.wheelCount)
+end
+
+-- Whether a group of a page has anything on it. In a stance, form or possession, page 1 is that bar
+-- (ActionButton_CalculateAction's bonus pages, after the six).
+local function GroupUsed(page, group)
+    local offset = GetBonusBarOffset()
+    local base = (page == 1 and offset > 0) and ((NUM_ACTIONBAR_PAGES or 6) + offset - 1) * 12 or (page - 1) * 12
+
+    for key = (group - 1) * db.wheelCount + 1, min(group * db.wheelCount, NUM_WHEEL) do
+        if HasAction(base + key) then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- The group the page button goes to next when it is on this page (nil: another page, through its key).
+local nextGroup
+-- The page the page button turns the bar to, and the group to show once it has.
+local pendingPage, pendingGroup
+
+-- The page button: the next group with anything in it, this page's or the next pages' (page 1's first group whatever
+-- is in it). Within the page, its binding (TOUCHCONTROLS_NEXTGROUP) moves the wheel along; to another page, that
+-- page's binding (ACTIONPAGE1 to 6, SHIFT-1 to SHIFT-6 by default) turns the bar, a key press so it works in combat.
 local function UpdatePage()
     local pages = NUM_ACTIONBAR_PAGES or 6
+    local groups = WheelGroups()
     local current = GetActionBarPage and GetActionBarPage() or 1
-    buttons.page.text:SetText(current)
+    local group = floor(wheelOffset / db.wheelCount) + 1
 
-    local nextPage = 1
+    buttons.page.text:SetText(groups > 1 and format("%d%s", current, strsub("abc", group, group)) or current)
 
-    for step = 1, pages do
-        local page = (current - 1 + step) % pages + 1
-        local used = page == 1
+    -- On a vehicle's bar the page doesn't count: the page button only steps through its groups.
+    if OtherBar() then
+        nextGroup, pendingPage, pendingGroup = group % groups + 1, nil, nil
+        controls.page.key = groups > 1 and GetBindingKey("TOUCHCONTROLS_NEXTGROUP") or nil
+        return
+    end
 
-        for slot = 1, NUM_WHEEL do
-            used = used or HasAction((page - 1) * 12 + slot)
-        end
+    local here = (current - 1) * groups + group - 1
+    local targetPage, targetGroup = 1, 1
 
-        if used then
-            nextPage = page
+    for step = 1, pages * groups do
+        local position = (here + step) % (pages * groups)
+        local page, candidate = floor(position / groups) + 1, position % groups + 1
+
+        if (page == 1 and candidate == 1) or GroupUsed(page, candidate) then
+            targetPage, targetGroup = page, candidate
             break
         end
     end
 
-    controls.page.key = GetBindingKey("ACTIONPAGE" .. nextPage)
+    if targetPage == current then
+        nextGroup, pendingPage, pendingGroup = targetGroup, nil, nil
+        controls.page.key = GetBindingKey("TOUCHCONTROLS_NEXTGROUP")
+    else
+        nextGroup, pendingPage, pendingGroup = nil, targetPage, targetGroup
+        controls.page.key = GetBindingKey("ACTIONPAGE" .. targetPage)
+    end
+end
+
+-- The wheel to a group of the bar's keys.
+local function ShowGroup(group)
+    wheelOffset = (group - 1) * db.wheelCount
+    SetWheelKeys()
+    UpdatePage()
+end
+
+function TouchControls_NextGroup()
+    if nextGroup then
+        ShowGroup(nextGroup)
+    end
 end
 
 -- Into the world on an empty page (keys 1 to = have nothing), the wheel turns to the first page that has something.
@@ -1093,6 +1218,7 @@ local function FirstUsedPage()
     for page = 1, NUM_ACTIONBAR_PAGES or 6 do
         if Used(page) then
             ChangeActionBarPage(page)
+            wheelOffset = 0
             return true
         end
     end
@@ -1153,7 +1279,7 @@ local function EnsureBindings()
     if (set == 1 or set == 2) and not InCombatLockdown() then
         ensuringBindings = true
 
-        for key, action in pairs({ F13 = "TOUCHCONTROLS_INTERACT", F14 = "TOUCHCONTROLS_TARGETNONHOSTILE", F15 = "TOUCHCONTROLS_TOGGLE", F16 = "TOUCHCONTROLS_MENU" }) do
+        for key, action in pairs({ F13 = "TOUCHCONTROLS_INTERACT", F14 = "TOUCHCONTROLS_TARGETNONHOSTILE", F15 = "TOUCHCONTROLS_TOGGLE", F16 = "TOUCHCONTROLS_MENU", F17 = "TOUCHCONTROLS_NEXTGROUP" }) do
             if not GetBindingKey(action) and (GetBindingAction(key) or "") == "" then
                 SetBinding(key, action)
             end
@@ -1173,9 +1299,7 @@ local function EnsureBindings()
     -- A double tap on the joystick presses autorun's key (NUMLOCK by default).
     TouchControls_SetAutorunKey(GetBindingKey("TOGGLEAUTORUN"))
 
-    for index = 1, NUM_WHEEL do
-        controls["action" .. index].key = GetBindingKey("ACTIONBUTTON" .. index)
-    end
+    SetWheelKeys()
 end
 
 function Refresh()
@@ -1205,6 +1329,7 @@ end)
 local elapsedSinceSlots = 0
 local elapsedSinceSync = 0
 local elapsedSinceInsets = 0
+local lastOtherBar
 local lastInsetLeft
 
 addon:SetScript("OnUpdate", function(self, elapsed)
@@ -1229,13 +1354,19 @@ addon:SetScript("OnUpdate", function(self, elapsed)
     if elapsedSinceSlots > 0.1 and wheelFrame:IsVisible() then
         elapsedSinceSlots = 0
 
-        for index, slot in ipairs(slots) do
-            UpdateSlot(slot, index)
+        for index = 1, db.wheelCount do
+            UpdateSlot(slots[index], wheelOffset + index)
         end
 
-        -- A form's, possession's or vehicle's bar takes keys 1 to = whatever the page: the page button rests.
-        local otherBar = (VehicleMenuBar and VehicleMenuBar:IsShown()) or (BonusActionBarFrame and BonusActionBarFrame:IsShown())
-        buttons.page:SetAlpha(otherBar and 0.35 or 1)
+        -- A vehicle's bar takes keys 1 to = whatever the page: the page button rests, unless the wheel shows the bar in
+        -- groups it steps through. Getting in or out repages.
+        local otherBar = OtherBar() and true or false
+        buttons.page:SetAlpha(otherBar and WheelGroups() == 1 and 0.35 or 1)
+
+        if otherBar ~= lastOtherBar then
+            lastOtherBar = otherBar
+            UpdatePage()
+        end
     end
 
     elapsedSinceSync = elapsedSinceSync + elapsed
@@ -1254,8 +1385,10 @@ addon:SetScript("OnUpdate", function(self, elapsed)
         if elapsedSinceInsets >= 1 then
             elapsedSinceInsets = 0
             local _, insetLeft = TouchControls_GetScreen()
+            local _, _, _, chatX = ChatFrame1:GetPoint(1)
 
-            if insetLeft ~= lastInsetLeft then
+            -- The game puts a chat window back where it was saved (dragged before) after the add-on places it.
+            if insetLeft ~= lastInsetLeft or not chatX or abs(chatX - ScreenWidth() * (0.02 + (insetLeft or 0))) > 1 then
                 lastInsetLeft = insetLeft
                 PlaceChat()
             end
@@ -1296,6 +1429,7 @@ addon:RegisterEvent("PLAYER_ENTERING_WORLD")
 addon:RegisterEvent("PLAYER_REGEN_ENABLED")
 addon:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
 addon:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+addon:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
 addon:RegisterEvent("UPDATE_BINDINGS")
 addon:RegisterEvent("UI_SCALE_CHANGED")
 addon:RegisterEvent("DISPLAY_SIZE_CHANGED")
@@ -1382,7 +1516,13 @@ addon:SetScript("OnEvent", function(self, event, name)
 
     if event == "UPDATE_CHAT_WINDOWS" then
         PlaceChat()
-    elseif event == "ACTIONBAR_PAGE_CHANGED" or event == "ACTIONBAR_SLOT_CHANGED" then
+    elseif event == "ACTIONBAR_PAGE_CHANGED" then
+        -- To the group the page button was going to, or the page's first.
+        local group = pendingPage == GetActionBarPage() and pendingGroup or 1
+        wheelOffset = (group - 1) * db.wheelCount
+        SetWheelKeys()
+        UpdatePage()
+    elseif event == "ACTIONBAR_SLOT_CHANGED" or event == "UPDATE_BONUS_ACTIONBAR" then
         UpdatePage()
     elseif event == "UPDATE_BINDINGS" then
         EnsureBindings()

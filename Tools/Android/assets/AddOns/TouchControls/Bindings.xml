@@ -11,4 +11,7 @@
 	<Binding name="TOUCHCONTROLS_MENU">
 		TouchControls_ToggleMenu()
 	</Binding>
+	<Binding name="TOUCHCONTROLS_NEXTGROUP">
+		TouchControls_NextGroup()
+	</Binding>
 </Bindings>

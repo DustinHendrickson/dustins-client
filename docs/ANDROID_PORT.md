@@ -208,7 +208,7 @@ face buttons are action keys), with Android's button names in the hints. Touch a
   world turns the camera and the character, a tap on the world doesn't move anything, and the jump, menu, page and
   wheel controls press their keys.
   - The look: every control is a round icon (`SetPortraitToTexture`) in the minimap's ring, lit while a finger holds
-    it (`TouchControls_IsHeld`). The wheel is a fan of twelve around jump, three rows of four, that only shows what keys 1 to = cast now
+    it (`TouchControls_IsHeld`). The wheel is packed into the corner around jump, no higher than about half the screen (so the right side above it is open for turning the camera), each button clear of its neighbours by a fingertip. It shows 12, 8, 6 or 4 buttons (a menu option): fewer are bigger, and the page button steps through the bar's keys in groups ("1a", "1b") before turning to the next page with anything on it (in a stance or form page 1 is that bar). It only shows what keys 1 to = cast now
     (the main bar's page, a stance's or possession's bar, a vehicle's), with range, mana, cooldown and active states;
     the game's action bars are put away, leaving the experience bar at the screen's edge and the stance and pet bars
     above it. The page button pages to the next page with anything on it, and play starts on one.
@@ -241,6 +241,12 @@ face buttons are action keys), with Android's button names in the hints. Touch a
     a device restart, applied when the finger lifts); the first time, the render resolution goes to at most 1080 high
     and weather and particle density down a step. Each frame's work is reported to Android's performance hints
     (ADPF, Android 13 on) against the frame rate's time; on low memory the textures kept for reuse are let go.
+  - Interact and the targetings sit in a row along the bottom, left of the wheel; the quest tracker is a short block
+    beside the minimap; the chat is kept above the joystick (put back if the game restores a dragged position).
+  - The right thumb's cluster turns the camera too: a finger dragged off any button (past a wider slop than a tap's)
+    turns the camera from there, and buttons are hit as circles, so the gaps between them are the world's. The wheel,
+    interact and targeting buttons press on the finger's lift (the game casts on the key's release anyway), so a drag
+    presses nothing; jump presses on landing.
   - More touch: a tap on the UI by a second finger while the first turns the camera goes through (mouselook lets go
     for the click and takes the mouse back); a double tap on the joystick presses autorun's key; the menu has a
     camera speed slider and an invert option.
