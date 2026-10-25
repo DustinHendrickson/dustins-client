@@ -204,6 +204,12 @@ public class WowActivity extends NativeActivity {
         clipboard.setPrimaryClip(ClipData.newPlainText("World of Warcraft", text));
     }
 
+    /** The display's full size in pixels (whatever the window's size while it settles), for the game's modes. */
+    public int[] getDisplaySize() {
+        android.graphics.Rect bounds = getWindowManager().getMaximumWindowMetrics().getBounds();
+        return new int[] { bounds.width(), bounds.height() };
+    }
+
     /** The screen's density in dots per inch, for the UI's size on a phone. */
     public float getDensityDpi() {
         DisplayMetrics metrics = getResources().getDisplayMetrics();

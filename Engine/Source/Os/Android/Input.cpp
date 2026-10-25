@@ -15,13 +15,16 @@
 
 #include <android/input.h>
 #include <android/keycodes.h>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include "Engine/Source/Event/Types.h"
 #include "Engine/Source/Os/Android/AndroidInput.h"
@@ -85,6 +88,8 @@ int32_t s_mouseSpeed = 10;
 uint32_t s_osButtonState;
 RECT s_defaultWindowRect;
 OS_MOUSE_MODE s_osMouseMode;
+// The game's idle processing (network and timers), which Windows and macOS run only while a modal loop holds the game
+// (dragging or resizing the window); here, while Android's keyboard dialog is open (EditText).
 void (*s_eventPollProc)();
 C2iVector s_mousePos;
 bool s_keyDown[KEY_LAST];
@@ -471,6 +476,45 @@ bool TextMode() {
     return s_textFocus || s_secureFocus;
 }
 
+// Android's keyboard dialog, which takes the player's time: it runs on a thread of its own while this one keeps the
+// game's network and timers going (the idle processing Windows runs during a window drag), so a long chat message
+// doesn't drop the connection. Nothing is drawn meanwhile; the dialog covers the game.
+bool EditText(const char* title, const char* text, bool password, std::string* result) {
+    std::mutex lock;
+    std::condition_variable doneChanged;
+    bool done = false;
+    bool entered = false;
+
+    std::thread dialog([&] {
+        entered = AndroidEditText(title, text, password, result);
+
+        std::lock_guard<std::mutex> guard(lock);
+        done = true;
+        doneChanged.notify_all();
+    });
+
+    std::unique_lock<std::mutex> guard(lock);
+
+    while (!done) {
+        if (doneChanged.wait_for(guard, std::chrono::milliseconds(33), [&] { return done; })) {
+            break;
+        }
+
+        guard.unlock();
+
+        if (s_eventPollProc) {
+            s_eventPollProc();
+        }
+
+        guard.lock();
+    }
+
+    guard.unlock();
+    dialog.join();
+
+    return entered;
+}
+
 // The keyboard for a focused text box: first its text (Ctrl+A, Ctrl+C, captured on the way to the clipboard), then
 // Android's keyboard over it (on a later poll, once the game has handled the keys).
 void PollKeyboard(uint64_t now) {
@@ -505,8 +549,7 @@ void PollKeyboard(uint64_t now) {
 
             std::string text;
 
-            // Blocks the game until the player is done, as the Switch's keyboard does.
-            if (AndroidEditText(s_secureFocus ? "Password" : "World of Warcraft", s_copyText.c_str(), s_secureFocus, &text)) {
+            if (EditText(s_secureFocus ? "Password" : "World of Warcraft", s_copyText.c_str(), s_secureFocus, &text)) {
                 ControlKey(KEY_A);
 
                 if (text.empty()) {
@@ -572,10 +615,6 @@ void Poll() {
 
     PollTouchHold(now);
     PollKeyboard(now);
-
-    if (s_eventPollProc) {
-        s_eventPollProc();
-    }
 }
 
 }
@@ -656,7 +695,9 @@ void AndroidInputSetRenderSize(int32_t width, int32_t height) {
 }
 
 void AndroidInputSetTextFocus(bool focus) {
-    if (focus && !s_textFocus) {
+    // Asked again while the box has the focus (a click on it, CSimpleEditBox::OnLayerMouseDown): Android's keyboard
+    // comes back if it was closed.
+    if (focus && (!s_textFocus || s_keyboardState == Keyboard_Idle)) {
         s_textFocus = true;
         s_textFocusSinceMs = OsGetAsyncTimeMs();
     } else if (!focus) {
@@ -843,7 +884,7 @@ intptr_t OsWindowProc(void* window, uint32_t message, uintptr_t wparam, intptr_t
 void OsInputEnableSecureMode(int32_t enable) {
     bool focus = enable != 0;
 
-    if (focus && !s_secureFocus) {
+    if (focus && (!s_secureFocus || s_keyboardState == Keyboard_Idle)) {
         s_secureFocus = true;
         s_textFocusSinceMs = OsGetAsyncTimeMs();
     } else if (!focus) {

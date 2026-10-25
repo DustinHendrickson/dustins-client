@@ -188,18 +188,14 @@ target_link_libraries(Wow
 # On Android, libwow.so is loaded by WowActivity (Tools/Android), which Tools/Android/build.sh packages with it into an
 # APK. It keeps its symbols out of the APK's copy: crash logs give addresses as offsets into the build tree's copy.
 if (WOWDECOMP_PLATFORM_ANDROID)
-    # The commit a build came from, printed at the top of Logs/Console.txt.
-    execute_process(
-        COMMAND git -c safe.directory=* rev-parse --short HEAD
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        OUTPUT_VARIABLE WOWDECOMP_BUILD_ID
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
+    # The commit a build came from, printed at the top of Logs/Console.txt: rewritten on every build (when it
+    # changes), so a log matches its libwow.so even when CMake hasn't reconfigured since the last commit.
+    add_custom_target(WowBuildId
+        COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR} -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/WowBuildId.h -P ${CMAKE_SOURCE_DIR}/cmake/BuildId.cmake
+        BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/WowBuildId.h
     )
-    if (NOT WOWDECOMP_BUILD_ID)
-        set(WOWDECOMP_BUILD_ID unknown)
-    endif ()
-    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Android/main.cpp PROPERTIES COMPILE_DEFINITIONS WOWDECOMP_BUILD_ID="${WOWDECOMP_BUILD_ID}")
+    add_dependencies(Wow WowBuildId)
+    target_include_directories(Wow PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
     target_link_libraries(Wow PRIVATE android EGL GLESv3 log)
 

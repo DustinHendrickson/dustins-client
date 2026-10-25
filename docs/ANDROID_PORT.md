@@ -118,3 +118,15 @@ Gamepads use the Switch port's mapping (play / cursor modes, the D-pad menu navi
   Icecrown scene with its skinned models, particles, lighting, fog and glow. (The emulator test used a trimmed
   `common.MPQ` holding the shaders and the scene's textures, for want of disk space; the scene and interface come from
   the locale archives.)
+- **Milestone 4 (plays): in progress.** On the emulator with the full data, the game logs in to the realm, plays its
+  login music through AAudio, and enters the world (Elwynn Forest), which renders correctly at about 11 frames per
+  second in the emulator's software renderer. Fixed on the way:
+  - The input layer ran the game's idle processing on every poll, which handled world packets during the loading
+    screen; it now runs only while Android's keyboard dialog holds the game (the dialog is on a thread of its own),
+    as Windows does during a window drag, so typing doesn't drop the connection.
+  - A click on the focused text box reopens Android's keyboard (`CSimpleEditBox::OnLayerMouseDown`).
+  - The display modes come from the display's size, not the window's, which can differ while the activity settles.
+  - Texture files get 1 KB of slack in memory: the DXT upload can read a few bytes past the last mip of some files,
+    which Android's allocator turns into a fault.
+  - The build ID in `Logs/Console.txt` is regenerated on every build (`cmake/BuildId.cmake`).
+  - The emulator needs its hardware keyboard on (`hw.keyboard = yes`) to take the Mac's keyboard.

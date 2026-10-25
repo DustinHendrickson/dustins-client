@@ -1022,11 +1022,17 @@ void CTextureAtlas::Reload() {
     this->m_dirty &= ~1;
 }
 
+// Spare bytes after a BLP file's data in memory. The device's DXT upload copies whole 4x4 block rows
+// (CGxDeviceOpenGl::ITexDownload), which can run a few bytes past the last mip of some files (ones from third-party
+// tools, as in custom patches). Windows and macOS round large allocations up, leaving room; Android's allocator puts
+// them against a guard page, where the over-read faults.
+static const uint32_t kBlpReadSlack = 1024;
+
 // VERIFY: 7f5ee904 manual
 // OFFSET: 0x004B64E0
 void AsyncTextureProcess(CAsyncObject* object, int32_t immediate) {
     object->m_link.Unlink();
-    object->m_buffer = SMemAlloc(object->m_size, __FILE__, __LINE__, 0);
+    object->m_buffer = SMemAlloc(object->m_size + kBlpReadSlack, __FILE__, __LINE__, 0);
     s_asyncLoadBufferUsed += object->m_size;
     AsyncFileReadObject(object, immediate);
 }
@@ -2160,7 +2166,7 @@ CTexture* CreateBlpSync(const char* fileName, char* extension, uint32_t flags, C
 
     SStrCopy(texture->m_filename, fileName, STORM_MAX_STR);
     uint32_t size = SFileGetFileSize(file, nullptr);
-    void* data = SMemAlloc(size, __FILE__, __LINE__, 0);
+    void* data = SMemAlloc(size + kBlpReadSlack, __FILE__, __LINE__, 0);
 
     if (!SFileReadFile(file, data, size, nullptr, nullptr, 0)) {
         DebugLog("CreateBlpTexture() failed read: %s.\n", fileName);

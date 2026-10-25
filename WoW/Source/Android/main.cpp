@@ -30,6 +30,7 @@
 #include "Engine/Source/Os/Android/AndroidSystem.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "WoW/Source/Client.h"
+#include "WowBuildId.h"
 
 // What _NSGetArgc and _NSGetArgv report (Base/Compat/Android/crt_externs.h): the game reads its command line from
 // them. An activity has none.

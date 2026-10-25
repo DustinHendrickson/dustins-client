@@ -175,6 +175,34 @@ bool AndroidOpenURL(const char* url) {
 }
 
 void AndroidGetScreenSize(int32_t* width, int32_t* height) {
+    // The display's size, asked once: the window's changes while the activity settles into landscape, and the game's
+    // display modes (Gx/CGxDevice/Android) follow from this.
+    static int32_t s_displayWidth;
+    static int32_t s_displayHeight;
+
+    if (!s_displayWidth) {
+        JNIEnv* env = Env();
+        jmethodID method = env ? Method(env, "getDisplaySize", "()[I") : nullptr;
+        jintArray size = method ? static_cast<jintArray>(env->CallObjectMethod(s_activity->clazz, method)) : nullptr;
+
+        if (method && !Failed(env) && size && env->GetArrayLength(size) >= 2) {
+            jint values[2];
+            env->GetIntArrayRegion(size, 0, 2, values);
+            s_displayWidth = values[0] > values[1] ? values[0] : values[1];
+            s_displayHeight = values[0] > values[1] ? values[1] : values[0];
+        }
+
+        if (size) {
+            env->DeleteLocalRef(size);
+        }
+    }
+
+    if (s_displayWidth > 0 && s_displayHeight > 0) {
+        *width = s_displayWidth;
+        *height = s_displayHeight;
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(s_lock);
 
     if (s_window) {

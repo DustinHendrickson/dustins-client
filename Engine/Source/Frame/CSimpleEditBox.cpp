@@ -3101,6 +3101,18 @@ int32_t CSimpleEditBox::OnLayerMouseDown(const CMouseEvent& evt, const char* btn
 
     this->UpdateDirtyBits();
 
+#if defined(WOWDECOMP_PLATFORM_ANDROID)
+    // On Android, text comes from the system keyboard, which the player may have closed while this box kept the focus:
+    // a click on the box asks for it again, as gaining the focus does (OnFocusChange).
+    if (this == CSimpleEditBox::s_currentFocus) {
+        if (this->m_editBoxFlags & 0x8) {
+            OsInputEnableSecureMode(1);
+        } else if (!(this->m_editBoxFlags & 0x4)) {
+            OsIMEEnable(1);
+        }
+    }
+#endif
+
     int32_t index;
 
     if (!this->m_imeComposition && this->ConvertCoordinateToIndex(evt.m_data.m_mousePosition.x, evt.m_data.m_mousePosition.y, index)) {
