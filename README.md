@@ -57,6 +57,14 @@ On the Nintendo Switch (homebrew; port notes, controls and status in [docs/SWITC
 - Docker, to build (the toolchain is devkitPro's devkitA64 with Clang, in `Tools/Switch/Dockerfile`)
 - A Switch that runs homebrew, and the `Data` folder of a 3.3.5a client on its SD card
 
+On Android (phones and tablets, played by touch; port notes, controls and status in
+[docs/ANDROID_PORT.md](docs/ANDROID_PORT.md)):
+
+- To build: the Android SDK with platform `android-35`, build-tools 35 and NDK r27 (`ANDROID_HOME`, default
+  `~/Library/Android/sdk`), a JDK 17 (`JAVA_HOME`), CMake and Ninja. No Gradle or Android Studio project is needed.
+- To play: an arm64 device with Android 11 or newer and OpenGL ES 3.0, about 18 GB free, and the `Data` folder of a
+  3.3.5a client
+
 ## Building
 
 From a Developer PowerShell or any shell with `cmake` on `PATH`:
@@ -110,6 +118,17 @@ Tools/Switch/build.sh
 This builds in Docker and writes `bin/Switch/WoW.nro`, the homebrew executable, and `bin/Switch/Wow.elf`, the same
 program with symbols for reading crash logs. Not yet tested on hardware.
 
+### Android
+
+```bash
+Tools/Android/build.sh            # build bin/Android/WoW.apk
+Tools/Android/build.sh install    # build, install on the connected device or emulator (adb) and start it
+```
+
+This builds `libwow.so` with the NDK and packs it with the app's one Java class, its manifest and the `TouchControls`
+add-on into `bin/Android/WoW.apk`, signed with a debug key made on first use (`build/android/debug.keystore`).
+Prebuilt APKs are on the [releases page](https://github.com/DustinHendrickson/wowdecomp/releases).
+
 ### Options
 
 | CMake option | Default | Effect |
@@ -156,6 +175,33 @@ On the Nintendo Switch:
    only a game gets.
 3. Pick World of Warcraft. Controls are in [docs/SWITCH_PORT.md](docs/SWITCH_PORT.md#controls).
 
+On Android:
+
+1. Install `WoW.apk` (built as above, or from the releases page): open it on the device and allow installs from your
+   browser or file manager when asked, or run `adb install WoW.apk`. The APK is signed with a development key, so
+   Play Protect may warn once; choose **Install anyway**.
+2. Open World of Warcraft once. It asks for **All files access**: tap **Allow**, turn the switch on for World of
+   Warcraft, and go back. The game creates a `WoW335` folder in the device's internal storage, says no game data was
+   found, and quits.
+3. Copy your 3.3.5a `Data` folder into that folder, so you have `WoW335/Data/common.MPQ`, `WoW335/Data/enUS/` and so
+   on (to apps, internal storage is `/sdcard`, so the path is `/sdcard/WoW335/Data/`).
+   - From Windows: connect the device, pick **File transfer** in its USB notification, and drag `Data` into
+     `Internal shared storage\WoW335` in File Explorer.
+   - From a Mac: use [OpenMTP](https://openmtp.ganeshrvel.com) or Android File Transfer, or
+     `adb push Data /sdcard/WoW335/`.
+   - Copy `Data` only, not `Wow.exe` or the rest of the client, and check the copy is complete: 17 GB over USB can
+     drop files.
+4. Point `WoW335/Data/<locale>/realmlist.wtf` at your server (`set realmlist your.server.address`). It's easiest to
+   edit it on your computer before copying.
+5. Open World of Warcraft and log in. A **How to play** guide to the touch controls opens the first time you enter
+   the world, and from the touch menu any time after.
+
+Everything else lives in `WoW335` too: settings in `WTF/`, add-ons in `Interface/AddOns/` (the touch controls
+add-on is put back at every start), `Screenshots/`, and the log and crash reports in `Logs/` and `Errors/`. As on
+macOS, Warden's modules aren't run, so use a server with Warden turned off. If the game says no data was found,
+check that `Data` sits directly in `WoW335` (not `WoW335/Data/Data`); if it keeps asking for file access, turn it on
+in Settings → Apps → Special app access → All files access.
+
 ## Layout
 
 | Path | Contents |
@@ -166,6 +212,8 @@ On the Nintendo Switch:
 | `ThirdParty/` | Libraries linked from their upstream sources |
 | `Tools/WowClient/` | The `WowClient` executable target |
 | `Tools/XvidDecoder/` | x64 movie decoder that replaces the original 32-bit `DivxDecoder.dll` |
+| `Tools/Android/` | The Android app: its build script, manifest, `WowActivity` and the `TouchControls` add-on |
+| `Tools/Switch/` | The Switch build (Docker image, build script, the `SwitchControls` add-on) |
 | `Tools/OsWindowTest/`, `Tools/GxDrawTest/`, `Tools/NetTest/`, `Tools/SoundTest/` | macOS self-tests for the window and input, OpenGL device, network and sound layers (`--self-test` / no arguments) |
 
 ## Special thanks
