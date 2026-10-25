@@ -227,6 +227,11 @@ uint64_t s_joystickTapMs;
 // A tap on the UI by a second finger while the first turns the camera: mouselook lets go for the click, which happens
 // once the game is out of relative mode, and takes the mouse back after (PollTouch).
 bool s_tapThroughPending;
+
+// The on-screen modifier latch (AndroidInputSetLatch): Shift, Ctrl or Alt held down for the next finger on the UI or the
+// world, from its landing to its lift, then let go.
+uint32_t s_latch;
+int32_t s_latchFinger = -1;
 C2iVector s_tapThroughPoint;
 bool (*s_wheelQuery)();
 void (*s_lowMemoryHandler)();
@@ -513,9 +518,13 @@ void PutControlKey(int32_t key, uint32_t modifiers, bool down) {
             }
         }
 
-        PutKey(static_cast<KEY>(key), true);
+        if (key != KEY_NONE) {
+            PutKey(static_cast<KEY>(key), true);
+        }
     } else {
-        PutKey(static_cast<KEY>(key), false);
+        if (key != KEY_NONE) {
+            PutKey(static_cast<KEY>(key), false);
+        }
 
         for (int32_t i = 2; i >= 0; i--) {
             if (modifiers & (1u << i)) {
@@ -634,6 +643,12 @@ void FingerDown(int32_t id, const C2iVector& point, uint64_t now) {
     }
 
     if (s_mouseFinger < 0) {
+        // A latched modifier goes down with it, for its click (Shift + click, Ctrl + click, ...).
+        if (s_latch && s_latchFinger < 0) {
+            s_latchFinger = FingerIndex(finger);
+            PutControlKey(KEY_NONE, s_latch, true);
+        }
+
         // The mouse goes there; once the game has seen it move, its focus says whether this is UI or world.
         finger->role = Finger_Deciding;
         finger->decidePoll = s_pollCount + 1;
@@ -907,6 +922,13 @@ void FingerUp(Finger& finger, bool cancel) {
 
         default:
             break;
+    }
+
+    // The latched modifier's finger has done its click: the modifier lets go, and the latch is spent.
+    if (s_latchFinger == FingerIndex(&finger)) {
+        PutControlKey(KEY_NONE, s_latch, false);
+        s_latch = 0;
+        s_latchFinger = -1;
     }
 
     if (s_mouseFinger == FingerIndex(&finger)) {
@@ -1620,6 +1642,20 @@ void AndroidInputSetPointQuery(int32_t (*query)()) {
 
 void AndroidInputSetWheelQuery(bool (*query)()) {
     s_wheelQuery = query;
+}
+
+void AndroidInputSetLatch(uint32_t modifiers) {
+    // Changed while a finger holds it: that finger's modifiers go up first.
+    if (s_latchFinger >= 0) {
+        PutControlKey(KEY_NONE, s_latch, false);
+        s_latchFinger = -1;
+    }
+
+    s_latch = modifiers;
+}
+
+uint32_t AndroidInputGetLatch() {
+    return s_latch;
 }
 
 void AndroidInputSetUiAtPointQuery(bool (*query)(float x, float y)) {

@@ -174,24 +174,24 @@ Blocks normal play:
       item, buys from a merchant, cancels a buff, casts from the spellbook, uses an equipped item. Fix in Input.cpp:
       on the UI a hold is a hover (the tooltip stays while the finger does) and right-clicks on lift, cancelled if the
       finger slides off first; the world keeps hold = right-click.
-- [ ] Gem socketing (Shift + right-click), splitting stacks and buying in bulk (Shift + click): an on-screen modifier
+- [x] Gem socketing (Shift + right-click), splitting stacks and buying in bulk (Shift + click): an on-screen modifier
       latch (Shift; a long press for Ctrl or Alt) held for the next UI finger.
-- [ ] Dropdown submenus (difficulty, loot rules, raid markers) close on tap, and menus opened at the finger close
+- [x] Dropdown submenus (difficulty, loot rules, raid markers) close on tap, and menus opened at the finger close
       themselves 2 s after it lifts: hook UIDropDownMenu_StartCounting so menus stay until a choice or Back.
 
 Awkward:
-- [ ] Linking items, spells and quests to chat (Shift + click): the modifier latch; and the keyboard path must keep
+- [x] Linking items, spells and quests to chat (Shift + click): the modifier latch; and the keyboard path must keep
       |H…|h links when it re-types the box.
 - [x] Item comparison needs Shift: default alwaysCompareItems on.
 - [x] A tap on a talent learns it: default previewTalents on.
 - [x] Consolidated buffs exist only while hovered: default consolidateBuffs off.
 - [ ] The stack split window takes digits from the keyboard only: open the number keyboard for it, or add buttons.
 - [ ] Multi-line text boxes (macros, mail) get a one-line Android dialog: a multi-line EditText for them.
-- [ ] Binding-only actions not yet in the actions list: assist, focus, reply, stop attack, raid markers, nameplates.
+- [x] Binding-only actions not yet in the actions list: assist, focus, reply, stop attack, raid markers, nameplates.
 - [ ] Press-and-hold buttons pulse once (vehicle aim, model rotate, scroll arrows): touch keys for vehicle aim.
 - [ ] The wheel takes spellbook spells by a hold, and anything on the cursor by a drop or tap; no way to clear or
       move a wheel slot yet.
-- [ ] Item flyouts on the character panel (Alt): the modifier latch.
+- [x] Item flyouts on the character panel (Alt): the modifier latch.
 
 Rare: the Key Bindings window (needs real key presses), no hover in the world (unit names, @mouseover; holding on the
 minimap pings), the dressing room (Ctrl + click), other Shift-only actions (glyph removal, raid pull-outs, take all

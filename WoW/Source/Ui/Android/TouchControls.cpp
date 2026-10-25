@@ -17,6 +17,8 @@
 //                                   fractions of the screen, and its physical size
 //   interacted = TouchControls_Interact()      loot, talk to or use the nearest thing in reach (Ui/Mac/PortActions)
 //   TouchControls_TargetNonHostile([reverse])  the next friendly or neutral unit
+//   TouchControls_SetLatch(modifier)           "SHIFT", "CTRL" or "ALT" for the next finger on the UI or world, or nil
+//   modifier = TouchControls_GetLatch()        the latched modifier, nil once a finger has used it
 //   TouchControls_SetFrameRate(fps)            60, or 30 to save the battery
 //   TouchControls_SetCamera(speed, invert)     the camera drag's speed (1 by default) and up / down swapped
 //   TouchControls_SetAutorunKey(key)           the key a double tap on the joystick presses (autorun's binding)
@@ -337,6 +339,36 @@ int32_t Script_TouchControls_TargetNonHostile(lua_State* L) {
     return 0;
 }
 
+const char* const s_latchNames[] = { "SHIFT", "CTRL", "ALT" };
+
+int32_t Script_TouchControls_SetLatch(lua_State* L) {
+    const char* name = lua_tostring(L, 1);
+    uint32_t modifiers = 0;
+
+    for (uint32_t i = 0; name && i < 3; i++) {
+        if (!strcmp(name, s_latchNames[i])) {
+            modifiers = 1u << i;
+        }
+    }
+
+    AndroidInputSetLatch(modifiers);
+    return 0;
+}
+
+int32_t Script_TouchControls_GetLatch(lua_State* L) {
+    uint32_t modifiers = AndroidInputGetLatch();
+
+    for (uint32_t i = 0; i < 3; i++) {
+        if (modifiers & (1u << i)) {
+            lua_pushstring(L, s_latchNames[i]);
+            return 1;
+        }
+    }
+
+    lua_pushnil(L);
+    return 1;
+}
+
 int32_t Script_TouchControls_SetFrameRate(lua_State* L) {
     AndroidGlSetFrameRate(static_cast<int32_t>(lua_tonumber(L, 1)));
     return 0;
@@ -393,6 +425,8 @@ const struct {
     { "TouchControls_Interact", &Script_TouchControls_Interact },
     { "TouchControls_TargetNonHostile", &Script_TouchControls_TargetNonHostile },
     { "TouchControls_SetFrameRate", &Script_TouchControls_SetFrameRate },
+    { "TouchControls_SetLatch", &Script_TouchControls_SetLatch },
+    { "TouchControls_GetLatch", &Script_TouchControls_GetLatch },
     { "TouchControls_SetCamera", &Script_TouchControls_SetCamera },
     { "TouchControls_SetAutorunKey", &Script_TouchControls_SetAutorunKey },
     { "TouchControls_Log", &Script_TouchControls_Log },

@@ -82,6 +82,11 @@ bool AndroidInputGetJoystick(float* originX, float* originY, float* x, float* y)
 // Whether a finger is holding the key control of that name, for the add-on to draw it pressed.
 bool AndroidInputControlHeld(const char* name);
 
+// The on-screen modifier latch: Shift, Ctrl and / or Alt (AndroidInputModifier) held for the next finger on the UI or
+// the world, from its landing to its lift; then it's spent (GetLatch is 0 again).
+void AndroidInputSetLatch(uint32_t modifiers);
+uint32_t AndroidInputGetLatch();
+
 // Whether a finger pressed the key control of that name since the last time this was asked of it.
 bool AndroidInputControlPressed(const char* name);
 

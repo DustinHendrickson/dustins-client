@@ -22,6 +22,7 @@ BINDING_NAME_TOUCHCONTROLS_RADIAL = "Touch controls: actions"
 BINDING_NAME_TOUCHCONTROLS_ASSIGN = "Touch controls: put a spell on the held button"
 BINDING_NAME_TOUCHCONTROLS_DISMOUNT = "Dismount"
 BINDING_NAME_TOUCHCONTROLS_FOLLOW = "Follow target"
+BINDING_NAME_TOUCHCONTROLS_MODIFIER = "Touch controls: Shift / Ctrl / Alt for the next tap"
 
 local defaults = {
     style = "wheel",    -- "wheel": the thumb wheel; "bars": the default action bars
@@ -265,6 +266,39 @@ AddButton("chat", "Interface\\Icons\\INV_Letter_15", "ENTER")
 AddButton("character", nil, "C")
 AddButton("bags", "Interface\\Icons\\INV_Misc_Bag_08", "F19")
 AddButton("actions", "Interface\\Icons\\Ability_Rogue_Disguise", "CTRL-F16")
+AddButton("modifier", "Interface\\Icons\\INV_Misc_Key_03", "CTRL-F18")
+
+-- The modifier button shows the latched modifier, and glows while one waits for a finger.
+buttons.modifier.text = buttons.modifier:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+buttons.modifier.text:SetPoint("CENTER", 0, 0)
+buttons.modifier.glow = buttons.modifier:CreateTexture(nil, "OVERLAY")
+buttons.modifier.glow:SetTexture("Interface\\Buttons\\IconBorder-GlowRing")
+buttons.modifier.glow:SetBlendMode("ADD")
+buttons.modifier.glow:SetPoint("CENTER")
+buttons.modifier.glow:Hide()
+
+local MODIFIER_LABELS = { SHIFT = "Shift", CTRL = "Ctrl", ALT = "Alt" }
+local MODIFIER_NEXT = { SHIFT = "CTRL", CTRL = "ALT", ALT = nil }
+
+-- Off, Shift, Ctrl, Alt, off: for the next tap, hold or drag on the UI or the world (socketing, splitting stacks,
+-- linking to chat, the dressing room, item flyouts).
+function TouchControls_CycleModifier()
+    local current = TouchControls_GetLatch()
+    TouchControls_SetLatch(current and MODIFIER_NEXT[current] or (not current and "SHIFT") or nil)
+end
+
+local function UpdateModifier()
+    local latch = TouchControls_GetLatch()
+    buttons.modifier.text:SetText(latch and MODIFIER_LABELS[latch] or "")
+
+    if latch then
+        buttons.modifier.glow:Show()
+        buttons.modifier.icon:SetAlpha(0.35)
+    else
+        buttons.modifier.glow:Hide()
+        buttons.modifier.icon:SetAlpha(1)
+    end
+end
 controls.actions.holdAction = "TOUCHCONTROLS_RADIAL"
 AddButton("menu", "Interface\\Icons\\INV_Misc_Gear_01", "F16")
 AddButton("toggle", "Interface\\Icons\\Spell_Shadow_DetectInvisibility", "F15")
@@ -322,6 +356,14 @@ local radialEntries = {
     { name = "radialMap", action = "TOGGLEWORLDMAP", label = "Map", icon = "Interface\\Icons\\INV_Misc_Map_01", spare = "ALT-F17" },
     { name = "radialSelf", action = "TARGETSELF", label = "Target self", icon = "Interface\\Icons\\Spell_Holy_PowerWordShield", spare = "ALT-F18" },
     { name = "radialFollow", action = "TOUCHCONTROLS_FOLLOW", label = "Follow", icon = "Interface\\Icons\\Ability_Rogue_Sprint", spare = "CTRL-F15" },
+    { name = "radialAssist", action = "ASSISTTARGET", label = "Assist", icon = "Interface\\Icons\\Ability_Hunter_MarkedForDeath", spare = "SHIFT-F14" },
+    { name = "radialFocus", action = "FOCUSTARGET", label = "Set focus", icon = "Interface\\Icons\\Ability_Hunter_SniperShot", spare = "SHIFT-F15" },
+    { name = "radialTargetFocus", action = "TARGETFOCUS", label = "Target focus", icon = "Interface\\Icons\\Spell_Holy_MindVision", spare = "SHIFT-F16" },
+    { name = "radialReply", action = "REPLY", label = "Reply", icon = "Interface\\Icons\\INV_Letter_15", spare = "SHIFT-F17" },
+    { name = "radialStopAttack", action = "STOPATTACK", label = "Stop attack", icon = "Interface\\Icons\\Ability_Rogue_FeignDeath", spare = "SHIFT-F18" },
+    { name = "radialPetAttack", action = "PETATTACK", label = "Pet attack", icon = "Interface\\Icons\\Ability_GhoulFrenzy", spare = "SHIFT-F19" },
+    { name = "radialSkull", action = "RAIDTARGET8", label = "Mark skull", icon = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_8", spare = "SHIFT-CTRL-F14" },
+    { name = "radialNameplates", action = "NAMEPLATES", label = "Nameplates", icon = "Interface\\Icons\\INV_Misc_Note_02", spare = "SHIFT-CTRL-F15" },
     { name = "radialDismount", action = "TOUCHCONTROLS_DISMOUNT", label = "Dismount", icon = "Interface\\Icons\\Ability_Mount_RidingHorse", spare = "CTRL-F14" },
     { name = "radialScreenshot", action = "SCREENSHOT", label = "Screenshot", icon = "Interface\\Icons\\INV_Misc_Spyglass_03", spare = "ALT-F19" },
 }
@@ -550,8 +592,8 @@ end
 
 local function LayoutRadial()
     local height = ScreenHeight()
-    local rowHeight = height * 0.115
-    local rowWidth = height * 0.46
+    local rowHeight = height * 0.1
+    local rowWidth = height * 0.44
     local gap = height * 0.018
     local padding = height * 0.03
 
@@ -567,15 +609,17 @@ local function LayoutRadial()
         end
     end
 
-    local rows = ceil(#shown / 2)
-    radialPanel:SetWidth(rowWidth * 2 + gap + padding * 2)
+    -- Two columns, three once there are many: rows no more than six.
+    local columns = #shown > 12 and 3 or 2
+    local rows = ceil(#shown / columns)
+    radialPanel:SetWidth(rowWidth * columns + gap * (columns - 1) + padding * 2)
     radialPanel:SetHeight(rows * rowHeight + (rows - 1) * gap + padding * 2)
     radialPanel:ClearAllPoints()
     radialPanel:SetPoint("TOP", buttons.actions, "BOTTOM", 0, -gap)
     radialPanel:SetClampedToScreen(true)
 
     for index, entry in ipairs(shown) do
-        local column, line = (index - 1) % 2, floor((index - 1) / 2)
+        local column, line = (index - 1) % columns, floor((index - 1) / columns)
         local row = entry.button
         row:SetWidth(rowWidth)
         row:SetHeight(rowHeight)
@@ -1446,7 +1490,7 @@ local function Layout()
 
     -- Chat, the character panel, the bags, the menu and the show / hide toggle at the top, between the unit frames and
     -- the minimap.
-    local topRow = { "chat", "character", "bags", "actions", "menu", "toggle" }
+    local topRow = { "chat", "character", "bags", "actions", "modifier", "menu", "toggle" }
 
     for i, name in ipairs(topRow) do
         SizeRound(buttons[name], height * SMALL_SIZE)
@@ -1699,7 +1743,7 @@ local function EnsureBindings()
 
         for key, action in pairs({ F18 = "TOUCHCONTROLS_INTERACT", F14 = "TOUCHCONTROLS_TARGETNONHOSTILE", F15 = "TOUCHCONTROLS_TOGGLE", F16 = "TOUCHCONTROLS_MENU", F17 = "TOUCHCONTROLS_NEXTGROUP", F19 = "TOUCHCONTROLS_BAGS",
             ["CTRL-F14"] = "TOUCHCONTROLS_DISMOUNT", ["CTRL-F15"] = "TOUCHCONTROLS_FOLLOW", ["CTRL-F16"] = "TOUCHCONTROLS_RADIAL",
-            ["CTRL-F17"] = "TOUCHCONTROLS_ASSIGN" }) do
+            ["CTRL-F17"] = "TOUCHCONTROLS_ASSIGN", ["CTRL-F18"] = "TOUCHCONTROLS_MODIFIER" }) do
             if not GetBindingKey(action) and (GetBindingAction(key) or "") == "" then
                 SetBinding(key, action)
             end
@@ -1715,6 +1759,7 @@ local function EnsureBindings()
     controls.menu.key = GetBindingKey("TOUCHCONTROLS_MENU")
     controls.bags.key = GetBindingKey("TOUCHCONTROLS_BAGS")
     controls.actions.key = GetBindingKey("TOUCHCONTROLS_RADIAL")
+    controls.modifier.key = GetBindingKey("TOUCHCONTROLS_MODIFIER")
 
     for _, entry in ipairs(radialEntries) do
         controls[entry.name].key = GetBindingKey(entry.action)
@@ -1779,6 +1824,8 @@ addon:SetScript("OnUpdate", function(self, elapsed)
             end
         end
     end
+
+    UpdateModifier()
 
     -- A ring button pressed and let go (however quickly): its action is done, and the ring closes.
     if radialOpen then
@@ -1952,6 +1999,27 @@ local function UpdatePortrait()
     SetPortraitTexture(buttons.character.icon, "player")
     buttons.character.icon:Show()
 end
+
+-- Menus stay open until a choice, Cancel or Back: a finger leaving one (it leaves the screen after every lift) would
+-- otherwise start its two-second close, and a submenu reached by a hold on its arrow would be gone before the tap.
+hooksecurefunc("UIDropDownMenu_StartCounting", function(frame)
+    while frame and frame.parent do
+        frame = frame.parent
+    end
+
+    if frame then
+        frame.showTimer = nil
+        frame.isCounting = nil
+    end
+end)
+
+-- A choice in a submenu hides only the submenu (the mouse leaving would close the rest, which it no longer does): the
+-- whole menu goes with it.
+hooksecurefunc("UIDropDownMenuButton_OnClick", function(self)
+    if not self.keepShownOnClick and not self.hasArrow then
+        CloseDropDownMenus()
+    end
+end)
 
 -- UIParent hides for the full-screen world map, cinematics and Alt-Z, and this frame with it: its controls go too, so
 -- taps reach what is showing, and come back with it.

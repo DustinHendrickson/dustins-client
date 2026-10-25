@@ -26,6 +26,9 @@
 	<Binding name="TOUCHCONTROLS_DISMOUNT">
 		Dismount()
 	</Binding>
+	<Binding name="TOUCHCONTROLS_MODIFIER">
+		TouchControls_CycleModifier()
+	</Binding>
 	<Binding name="TOUCHCONTROLS_FOLLOW">
 		FollowUnit("target")
 	</Binding>
