@@ -216,6 +216,12 @@ face buttons are action keys), with Android's button names in the hints. Touch a
   - A control under a game window (a bag, the map, a dialog) gives its fingers to the window.
   - The game's cursor isn't drawn while fingers are in use, and the mouse leaves the screen after each tap, so
     nothing stays highlighted or keeps a tooltip.
+  - Readable on a phone: the first time in the world the interface size is set for the screen's physical height (about
+    640 units high on a phone, 120% here, so the tallest windows still fit; more on a tablet), the game's fonts are
+    enlarged 15% and chat text is 16. The menu has sliders for all three (interface size 64% to 150%, applied when the
+    finger lifts; text 100% to 150%; chat 10 to 24), and the game's own UI Scale slider reaches 150% too. With the
+    larger interface the quest tracker sits left of the minimap, the chat above the joystick, and the experience bar
+    across the middle half of the screen.
   - `/touch debug` logs the controls' areas and each bar page's used slots to `Logs/Console.txt`.
   Not yet tested: pinch (the emulator does it with Ctrl and a drag), a hold on the world, two fingers at once, and
   interact and the targeting buttons next to NPCs and enemies.

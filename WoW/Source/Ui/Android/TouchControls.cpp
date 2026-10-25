@@ -11,9 +11,9 @@
 //                                   while a finger holds the joystick: where it landed and how far it is pushed (-1 to
 //                                   1, right and up positive)
 //   held = TouchControls_IsHeld(name)    whether a finger is on that key control
-//   dpi, left, bottom, right, top = TouchControls_GetScreen()
-//                                   the screen's density, and the safe area's margins (the notch, the gesture bar) as
-//                                   fractions of the screen
+//   dpi, left, bottom, right, top, widthInches, heightInches = TouchControls_GetScreen()
+//                                   the screen's density, the safe area's margins (the notch, the gesture bar) as
+//                                   fractions of the screen, and its physical size
 //   interacted = TouchControls_Interact()      loot, talk to or use the nearest thing in reach (Ui/Mac/PortActions)
 //   TouchControls_TargetNonHostile([reverse])  the next friendly or neutral unit
 //   TouchControls_Log(text)                    a line in Logs/Console.txt
@@ -207,7 +207,11 @@ int32_t Script_TouchControls_GetScreen(lua_State* L) {
     lua_pushnumber(L, height ? static_cast<float>(bottom) / height : 0.0f);
     lua_pushnumber(L, width ? static_cast<float>(right) / width : 0.0f);
     lua_pushnumber(L, height ? static_cast<float>(top) / height : 0.0f);
-    return 5;
+
+    float dpi = AndroidGetDensityDpi();
+    lua_pushnumber(L, dpi > 0.0f ? width / dpi : 0.0f);
+    lua_pushnumber(L, dpi > 0.0f ? height / dpi : 0.0f);
+    return 7;
 }
 
 int32_t Script_TouchControls_Interact(lua_State* L) {

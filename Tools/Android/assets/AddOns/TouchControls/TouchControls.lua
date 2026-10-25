@@ -20,6 +20,8 @@ BINDING_NAME_TOUCHCONTROLS_MENU = "Touch controls menu"
 local defaults = {
     style = "wheel",    -- "wheel": the thumb wheel; "bars": the default action bars
     hidden = false,
+    textScale = 1.15,   -- the game's fonts, as a multiple of their own sizes
+    displayChosen = false,  -- whether the interface size for this screen has been set (once, then it's the player's)
 }
 
 local db
@@ -424,20 +426,168 @@ local menuTitle = menu:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 menuTitle:SetPoint("TOP", menuHeader, "TOP", 0, -14)
 menuTitle:SetText(MAINMENU_BUTTON or "Menu")
 
--- The micro buttons and bags, each row in a holder of its own scale.
-local MENU_SCALE = 1.6
+-- The micro buttons and bags, each row in a holder of its own scale, and the display settings in a third; all keep
+-- their size on the screen whatever the interface size.
+local function MenuScale()
+    return 1.6 * ScreenHeight() / 937
+end
+
 local microHolder = CreateFrame("Frame", nil, menu)
-microHolder:SetScale(MENU_SCALE)
 local bagHolder = CreateFrame("Frame", nil, menu)
-bagHolder:SetScale(MENU_SCALE)
+local displayHolder = CreateFrame("Frame", nil, menu)
 
 local styleButton = CreateFrame("Button", "TouchControlsMenuStyle", menu, "UIPanelButtonTemplate")
 local closeButton = CreateFrame("Button", "TouchControlsMenuClose", menu, "UIPanelButtonTemplate")
 
 for _, button in ipairs({ styleButton, closeButton }) do
-    button:SetScale(1.3)
     button:SetWidth(140)
     button:SetHeight(26)
+end
+
+------------------------------------------------------------------------------------------------------------------------
+-- Display: the interface's size, its text's, and the chat's.
+
+local UI_SCALE_MIN, UI_SCALE_MAX = 0.64, 1.5
+
+-- The size that gives the game's windows room on this screen: a phone's two or three inches get the interface about
+-- 640 units high (the tallest windows are 512 under a 104 margin), a tablet's more, towards a desktop's 768 and over.
+local function RecommendedScale()
+    local _, _, _, _, _, _, heightInches = TouchControls_GetScreen()
+
+    if not heightInches or heightInches <= 0 then
+        return 1
+    end
+
+    local unitsHigh = min(max(640 + (heightInches - 2.6) * 60, 640), 820)
+    return min(max(768 / unitsHigh, UI_SCALE_MIN), UI_SCALE_MAX)
+end
+
+local function SetUiScale(scale)
+    scale = floor(scale * 100 + 0.5) / 100
+    SetCVar("useUiScale", "1")
+    SetCVar("uiScale", scale)
+end
+
+-- Text: every font object the game names, from the size it was made with.
+local fontSizes = {}
+
+local function ApplyTextScale(scale)
+    local fonts = {}
+
+    for _, object in pairs(_G) do
+        if type(object) == "table" and type(object.GetObjectType) == "function" and type(object.GetFont) == "function" then
+            local ok, kind = pcall(object.GetObjectType, object)
+
+            if ok and kind == "Font" then
+                fonts[object] = true
+            end
+        end
+    end
+
+    -- All sizes first: a font follows the one it inherits from until it has a size of its own.
+    for font in pairs(fonts) do
+        if not fontSizes[font] then
+            local _, size = font:GetFont()
+            fontSizes[font] = size
+        end
+    end
+
+    for font in pairs(fonts) do
+        local file, _, flags = font:GetFont()
+
+        if file and fontSizes[font] then
+            font:SetFont(file, fontSizes[font] * scale, flags)
+        end
+    end
+end
+
+local function SetChatSize(size)
+    for index = 1, NUM_CHAT_WINDOWS or 10 do
+        local frame = _G["ChatFrame" .. index]
+
+        if frame then
+            FCF_SetChatWindowFontSize(nil, frame, size)
+        end
+    end
+end
+
+-- A slider with its label and value above it: apply(value) runs once the finger lets go, as resizing the interface
+-- under a dragging finger would move the slider away from it.
+local updatingSliders = false
+
+local function MakeSlider(name, label, low, high, step, show, apply, live)
+    local slider = CreateFrame("Slider", name, displayHolder, "OptionsSliderTemplate")
+    slider:SetWidth(300)
+    slider:SetHeight(17)
+    slider:SetMinMaxValues(low, high)
+    slider:SetValueStep(step)
+    _G[name .. "Low"]:SetText("")
+    _G[name .. "High"]:SetText("")
+
+    local text = _G[name .. "Text"]
+
+    slider:SetScript("OnValueChanged", function(self, value)
+        text:SetText(label .. ": |cffffffff" .. show(value) .. "|r")
+
+        if live and not updatingSliders then
+            apply(value)
+        end
+    end)
+
+    if not live then
+        slider:SetScript("OnMouseUp", function(self)
+            apply(self:GetValue())
+        end)
+    end
+
+    return slider
+end
+
+local Refresh
+local refreshAt     -- a second layout once a new interface size has settled (windows size themselves a frame later)
+
+local uiScaleSlider = MakeSlider("TouchControlsMenuUiScale", "Interface size", UI_SCALE_MIN, UI_SCALE_MAX, 0.01,
+    function(value) return format("%d%%", value * 100 + 0.5) end,
+    function(value)
+        SetUiScale(value)
+        Refresh()
+        refreshAt = GetTime() + 0.3
+    end)
+
+local textSlider = MakeSlider("TouchControlsMenuTextScale", "Text size", 1, 1.5, 0.05,
+    function(value) return format("%d%%", value * 100 + 0.5) end,
+    function(value)
+        db.textScale = value
+        ApplyTextScale(value)
+    end)
+
+local chatSlider = MakeSlider("TouchControlsMenuChatSize", "Chat text", 10, 24, 1,
+    function(value) return format("%d", value + 0.5) end,
+    function(value)
+        SetChatSize(floor(value + 0.5))
+    end, true)
+
+local displaySliders = { uiScaleSlider, textSlider, chatSlider }
+
+local function UpdateSliders()
+    updatingSliders = true
+    uiScaleSlider:SetValue(tonumber(GetCVar("uiScale")) or 1)
+    textSlider:SetValue(db.textScale)
+    chatSlider:SetValue(select(2, ChatFrame1:GetFont()) or 14)
+    updatingSliders = false
+end
+
+menu:SetScript("OnShow", UpdateSliders)
+
+-- The game's own UI Scale slider (Video options) reaches as far.
+local function WidenGameSlider()
+    if ResolutionPanelOptions and ResolutionPanelOptions.uiscale then
+        ResolutionPanelOptions.uiscale.maxValue = UI_SCALE_MAX
+    end
+
+    if VideoOptionsResolutionPanelUIScaleSlider then
+        VideoOptionsResolutionPanelUIScaleSlider:SetMinMaxValues(UI_SCALE_MIN, UI_SCALE_MAX)
+    end
 end
 
 closeButton:SetText(CLOSE or "Close")
@@ -513,21 +663,42 @@ local function FillMenu()
     bagHolder:SetWidth(bagWidth)
     bagHolder:SetHeight(37)
 
+    -- The display settings: three sliders, each under its label.
+    local sliderRow = 44
+    displayHolder:SetWidth(300)
+    displayHolder:SetHeight(sliderRow * #displaySliders)
+
+    for index, slider in ipairs(displaySliders) do
+        slider:ClearAllPoints()
+        slider:SetPoint("TOP", displayHolder, "TOP", 0, -sliderRow * (index - 1) - 20)
+    end
+
+    local scale = MenuScale()
+    local displayScale = scale * 0.8
+    local buttonScale = scale * 0.8
+    microHolder:SetScale(scale)
+    bagHolder:SetScale(scale)
+    displayHolder:SetScale(displayScale)
+    styleButton:SetScale(buttonScale)
+    closeButton:SetScale(buttonScale)
+
     local padding = 30
     local gap = 18
-    menu:SetWidth(max(microWidth, bagWidth) * MENU_SCALE + padding * 2)
-    menu:SetHeight(padding + 40 * MENU_SCALE + gap + 37 * MENU_SCALE + gap + 26 * 1.3 + padding)
+    menu:SetWidth(max(microWidth * scale, bagWidth * scale, 300 * displayScale) + padding * 2)
+    menu:SetHeight(padding + 40 * scale + gap + 37 * scale + gap + displayHolder:GetHeight() * displayScale + gap + 26 * buttonScale + padding)
     menu:ClearAllPoints()
-    menu:SetPoint("CENTER", UIParent, "CENTER", 0, ScreenHeight() * 0.05)
+    menu:SetPoint("CENTER", UIParent, "CENTER", 0, ScreenHeight() * 0.03)
 
     microHolder:ClearAllPoints()
-    microHolder:SetPoint("TOP", menu, "TOP", 0, -padding / MENU_SCALE)
+    microHolder:SetPoint("TOP", menu, "TOP", 0, -padding / scale)
     bagHolder:ClearAllPoints()
-    bagHolder:SetPoint("TOP", microHolder, "BOTTOM", 0, -gap / MENU_SCALE)
+    bagHolder:SetPoint("TOP", microHolder, "BOTTOM", 0, -gap / scale)
+    displayHolder:ClearAllPoints()
+    displayHolder:SetPoint("TOP", menu, "TOP", 0, -(padding + 40 * scale + gap + 37 * scale + gap) / displayScale)
     styleButton:ClearAllPoints()
-    styleButton:SetPoint("BOTTOMLEFT", menu, "BOTTOMLEFT", padding / 1.3, padding / 1.3)
+    styleButton:SetPoint("BOTTOMLEFT", menu, "BOTTOMLEFT", padding / buttonScale, padding / buttonScale)
     closeButton:ClearAllPoints()
-    closeButton:SetPoint("BOTTOMRIGHT", menu, "BOTTOMRIGHT", -padding / 1.3, padding / 1.3)
+    closeButton:SetPoint("BOTTOMRIGHT", menu, "BOTTOMRIGHT", -padding / buttonScale, padding / buttonScale)
 
     inMenu = true
 end
@@ -600,30 +771,30 @@ local function PlaceGameBars()
 
     local wheel = db.style == "wheel"
 
+    -- With the wheel, the main bar (its experience bar) spans the middle half of the screen, and the stance and pet
+    -- buttons (30 high) are a sixteenth of the screen's height.
+    local barScale = wheel and min(1, ScreenWidth() * 0.5 / MainMenuBar:GetWidth()) or 1
+    MainMenuBar:SetScale(barScale)
     MainMenuBar:ClearAllPoints()
     MainMenuBar:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, wheel and -40 or 0)
 
     for _, name in ipairs(SMALL_BARS) do
         if _G[name] then
-            _G[name]:SetScale(wheel and 1.35 or 1)
+            _G[name]:SetScale(wheel and ScreenHeight() * 0.06 / 30 / barScale or 1)
         end
     end
 end
 
--- The quest tracker ends above the wheel instead of running down behind it, and keeps to the screen's edge with the
--- right-hand bars away (UIParent_ManageFramePositions places it, then redraws it for its height).
+-- The quest tracker goes left of the minimap, under the buffs and above the wheel, instead of down the right edge
+-- behind it (UIParent_ManageFramePositions places it, then redraws it for its height).
 local function PlaceTracker()
     if not WatchFrame or WatchFrame:IsUserPlaced() or db.style ~= "wheel" then
         return
     end
 
-    local point, relativeTo, relativePoint, _, y = WatchFrame:GetPoint(1)
-
-    if point == "TOPRIGHT" and relativeTo then
-        WatchFrame:SetPoint("TOPRIGHT", relativeTo, relativePoint, -8, y)
-    end
-
-    WatchFrame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -8, ScreenHeight() * (CORNER + WHEEL_ROWS[#WHEEL_ROWS] + SLOT_SIZE))
+    local right = -(MinimapCluster and MinimapCluster:GetWidth() or 192) - 12
+    WatchFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", right, -ScreenHeight() * 0.17)
+    WatchFrame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", right, ScreenHeight() * 0.6)
 end
 
 hooksecurefunc("UIParent_ManageFramePositions", function()
@@ -640,10 +811,12 @@ local function PlaceChat()
         return
     end
 
-    -- Above the joystick's area, whatever the chat windows were saved with (the game restores those after the add-ons
-    -- load, so this is done again when it does).
+    -- Above the joystick's area and under the unit frames, whatever the chat windows were saved with (the game restores
+    -- those after the add-ons load, so this is done again when it does).
     ChatFrame1:ClearAllPoints()
-    ChatFrame1:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", ScreenWidth() * 0.02, ScreenHeight() * 0.6)
+    ChatFrame1:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", ScreenWidth() * 0.02, ScreenHeight() * 0.5)
+    ChatFrame1:SetWidth(ScreenWidth() * 0.3)
+    ChatFrame1:SetHeight(ScreenHeight() * 0.22)
 end
 
 local function Layout()
@@ -687,14 +860,13 @@ local function Layout()
 
     -- The joystick's area: the bottom left, clear of the main bar (its experience bar, and the stance and pet bars
     -- that start at its left end).
-    local barLeft = (width - MainMenuBar:GetWidth()) / 2
-    local joystickWidth = min(width * 0.33, max(barLeft - 8, width * 0.2))
+    local joystickWidth = wheel and width * 0.25 - 8 or width * 0.33
     local joystickBottom = wheel and 0 or (MainMenuBar:GetTop() or 53)
 
     joystickArea:ClearAllPoints()
     joystickArea:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, joystickBottom)
     joystickArea:SetWidth(joystickWidth)
-    joystickArea:SetHeight(height * 0.58 - joystickBottom)
+    joystickArea:SetHeight(height * 0.48 - joystickBottom)
     joystickRestX = min(0.14, joystickWidth / width * 0.55)
     joystickRestY = (joystickBottom + height * 0.15) / height
 
@@ -845,7 +1017,7 @@ local function EnsureBindings()
     end
 end
 
-local function Refresh()
+function Refresh()
     Layout()
     EnsureBindings()
     UpdatePage()
@@ -908,6 +1080,15 @@ addon:SetScript("OnUpdate", function(self, elapsed)
         if firstPageUntil and (FirstUsedPage() or GetTime() > firstPageUntil) then
             firstPageUntil = nil
         end
+
+        if refreshAt and GetTime() > refreshAt then
+            refreshAt = nil
+            Refresh()
+
+            if WatchFrame_Update then
+                WatchFrame_Update(WatchFrame)
+            end
+        end
     end
 end)
 
@@ -937,6 +1118,12 @@ addon:SetScript("OnEvent", function(self, event, name)
             end
         end
 
+        WidenGameSlider()
+
+        if db.textScale ~= 1 then
+            ApplyTextScale(db.textScale)
+        end
+
         return
     end
 
@@ -946,6 +1133,14 @@ addon:SetScript("OnEvent", function(self, event, name)
 
     if event == "PLAYER_ENTERING_WORLD" and db.style == "wheel" then
         firstPageUntil = GetTime() + 15
+    end
+
+    -- The first time on this screen: an interface size that fits it, and chat text to match.
+    if event == "PLAYER_ENTERING_WORLD" and not db.displayChosen then
+        db.displayChosen = true
+        SetUiScale(RecommendedScale())
+        SetChatSize(16)
+        refreshAt = GetTime() + 0.3
     end
 
     if event == "UPDATE_CHAT_WINDOWS" then
