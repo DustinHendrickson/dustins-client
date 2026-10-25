@@ -69,8 +69,11 @@ local JOYSTICK_RADIUS = 0.11    -- a full push (Input.cpp kJoystickRadius)
 
 -- The art: the minimap's ring around a round icon (SetPortraitToTexture), on a dark disc.
 local RING = "Interface\\Minimap\\UI-MINIMAP-BORDER"
-local RING_LEFT, RING_RIGHT, RING_TOP, RING_BOTTOM = 95 / 256, 241 / 256, 33 / 256, 179 / 256
+-- (The ring's crop: its circle sits 2.6 texels above the middle of the art's square, so the crop starts that much higher.)
+local RING_LEFT, RING_RIGHT, RING_TOP, RING_BOTTOM = 95 / 256, 241 / 256, 30.4 / 256, 176.4 / 256
 local RING_HOLE = 0.88      -- the ring's opening, as a fraction of its size
+local ICON_TRIM = 0.07      -- an icon's frame, as a fraction of its size
+local ICON_SIZE = 0.85      -- a trimmed icon, as a fraction of its button (its cut then ends at the ring's edge)
 local DISC = "Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
 local GLOW = "Interface\\Buttons\\IconBorder-GlowRing"
 
@@ -154,6 +157,10 @@ local function SizeRound(button, size)
         texture:SetHeight(hole)
     end
 
+    -- The trimmed icon's round cut reaches past its square: a little smaller, it stays inside the ring.
+    button.icon:SetWidth(size * ICON_SIZE)
+    button.icon:SetHeight(size * ICON_SIZE)
+
     if button.glow then
         button.glow:SetWidth(size * 1.45)
         button.glow:SetHeight(size * 1.45)
@@ -172,7 +179,9 @@ local function SetRoundIcon(button, path)
     button.iconPath = path
 
     if path then
+        -- The portrait is the whole icon cut round, its light frame included: the frame's edge is trimmed off.
         SetPortraitToTexture(button.icon, path)
+        button.icon:SetTexCoord(ICON_TRIM, 1 - ICON_TRIM, ICON_TRIM, 1 - ICON_TRIM)
         button.icon:Show()
     else
         button.icon:Hide()
@@ -259,10 +268,10 @@ local function AddButton(name, icon, key, flags)
 end
 
 -- Jump jumps the moment it's touched (a drag from it still turns the camera after); the rest press on lift.
-AddButton("jump", "Interface\\Icons\\Ability_Rogue_Sprint", "SPACE", "round")
-AddButton("interact", "Interface\\Icons\\INV_Gauntlets_04", "F18")
+AddButton("jump", "Interface\\Icons\\INV_Boots_08", "SPACE", "round")
+AddButton("interact", "Interface\\Icons\\INV_Misc_Gem_Pearl_04", "F18")
 AddButton("targetEnemy", "Interface\\Icons\\Ability_Hunter_SniperShot", "TAB")
-AddButton("targetFriend", "Interface\\Icons\\Spell_Holy_HolyBolt", "F14")
+AddButton("targetFriend", "Interface\\Icons\\Achievement_Reputation_01", "F14")
 AddButton("chat", "Interface\\Icons\\INV_Letter_15", "ENTER")
 AddButton("character", nil, "C")
 AddButton("bags", "Interface\\Icons\\INV_Misc_Bag_08", "F19")
@@ -303,7 +312,7 @@ local function UpdateModifier()
 end
 controls.actions.holdAction = "TOUCHCONTROLS_RADIAL"
 AddButton("menu", "Interface\\Icons\\INV_Misc_Gear_01", "F16")
-AddButton("toggle", "Interface\\Icons\\Spell_Shadow_DetectInvisibility", "F15")
+AddButton("toggle", "Interface\\Icons\\INV_Misc_Eye_01", "F15")
 AddButton("page", nil, nil)
 
 -- The page button shows the wheel's page as a number.
@@ -2459,7 +2468,7 @@ local HELP = {
         "You can also drag a spell or item from the spellbook or your bags and drop it on a button.",
         "|cffffd200Lock buttons|r (in the menu) stops a long press from opening the spellbook.",
         "|cffffd200Buttons on screen|r (in the menu): show 12, 8, 6 or 4. Fewer are bigger; the number button steps through the rest.",
-        "Interact (gauntlet) loots, talks to or uses the nearest thing. The two target buttons pick the nearest enemy, or friend.",
+        "Interact (the glowing orb) loots, talks to or uses the nearest thing. The two target buttons pick the nearest enemy, or friend.",
     } },
     { title = "The top bar", text = {
         "|cffffd200Letter|r: chat. |cffffd200Portrait|r: your character. |cffffd200Bag|r: all your bags.",
