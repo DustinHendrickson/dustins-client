@@ -8,7 +8,9 @@
 // reads, which matters on tiled mobile GPUs.
 //
 // Values that don't change the code are uniforms, uploaded per group when the group changed since the program last drew
-// (GlAndroidState.h Group). The ARB programs' program.env parameters are two uniform buffers that every program shares.
+// (GlAndroidState.h Group). The ARB programs' program.env parameters are uniform arrays, each program uploading the
+// parameters that changed since it last drew: uniform buffers updated on nearly every draw (the game sets its transforms
+// and bones per draw) make mobile drivers copy them, while glUniform is their fast path.
 //
 // The ARB translator covers what the game's shaders use (Cg 1.x output): the arbvp1 and arbfp1 instruction sets with
 // saturation, swizzles, write masks, negation, relative addressing of parameter arrays through A0, and the
@@ -16,6 +18,8 @@
 
 #include "Engine/Source/Gx/CGxDeviceOpenGL/Android/GlAndroidState.h"
 #include <android/log.h>
+#include <sys/stat.h>
+#include <cerrno>
 #include <cctype>
 #include <cmath>
 #include <cstdarg>
@@ -83,6 +87,12 @@ struct LinkedProgram {
     uint32_t versions[Group_Count];
     uint32_t attribs = 0;       // attribute locations read
     bool arbVertex = false;     // generic arrays (vertex program) rather than the conventional ones
+
+    // program.env as uniform arrays: each element's location, and the stamp (State envStamp) the program last caught
+    // up to.
+    std::vector<GLint> vertexEnv;
+    std::vector<GLint> fragmentEnv;
+    uint32_t envStamp = 0;
 };
 
 // GLES state as last set by PrepareDraw, to skip calls that change nothing.
@@ -101,8 +111,6 @@ std::unordered_map<std::string, std::unique_ptr<LinkedProgram>> s_programs;
 LinkedProgram* s_current;
 GLuint s_usedProgram;
 bool s_lastPoints;
-GLuint s_vertexEnvBuffer;
-GLuint s_fragmentEnvBuffer;
 AttribCache s_attribCache[kAttribs];
 
 std::string Format(const char* format, ...) {
@@ -187,7 +195,14 @@ class Translator {
     int32_t m_functions = 0;
 
     std::string Env(int32_t index) {
+        UseEnv(index);
         return Format("%s[%d]", m_vertex ? "u_vertexEnv" : "u_fragmentEnv", index);
+    }
+
+    void UseEnv(int32_t index) {
+        if (index + 1 > m_program.envCount) {
+            m_program.envCount = index + 1;
+        }
     }
 
     bool ParseFloat(const std::string& text, float* value);
@@ -727,6 +742,7 @@ bool Translator::Operand(const std::string& text, bool destination, std::string*
                             run++;
                         }
 
+                        UseEnv(symbol.elements[run - 1].env);
                         function += Format("    if (i < %d) return %s[i - %d];\n", static_cast<int32_t>(run), m_vertex ? "u_vertexEnv" : "u_fragmentEnv", static_cast<int32_t>(i) - symbol.elements[i].env);
                     } else {
                         function += Format("    if (i < %d) return ", static_cast<int32_t>(run)) + ElementExpression(symbol.elements[i]) + ";\n";
@@ -1530,7 +1546,12 @@ std::string FixedVertexShader(const State& s, bool points, uint32_t varyings, ui
 
 std::string ArbVertexShader(const ArbProgram& program, bool points, bool programPointSize, uint32_t varyings, uint32_t* attribs) {
     std::string text = kHeader;
-    text += Format("layout(std140) uniform GxVertexEnv { vec4 u_vertexEnv[%d]; };\nuniform vec4 u_pointParams;\n", kEnvParams);
+    text += "uniform vec4 u_pointParams;\n";
+
+    if (program.envCount) {
+        text += Format("uniform vec4 u_vertexEnv[%d];\n", program.envCount);
+    }
+
 
     for (int32_t i = 0; i < kAttribs; i++) {
         if (program.inputs & (1u << i)) {
@@ -1743,7 +1764,10 @@ std::string FixedFragmentShader(const State& s, bool points, uint32_t varyings) 
 
 std::string ArbFragmentShader(const State& s, const ArbProgram& program, uint32_t varyings) {
     std::string text = kHeader;
-    text += Format("layout(std140) uniform GxFragmentEnv { vec4 u_fragmentEnv[%d]; };\n", kEnvParams);
+    if (program.envCount) {
+        text += Format("uniform vec4 u_fragmentEnv[%d];\n", program.envCount);
+    }
+
     text += "uniform vec4 u_fogParams;\nuniform vec4 u_fogColor;\nuniform float u_alphaRef;\n";
     text += VaryingDeclarations(varyings, "in");
     text += "out vec4 fragColor;\n";
@@ -1788,6 +1812,127 @@ GLuint Compile(GLenum type, const std::string& source) {
     }
 
     return shader;
+}
+
+// The program cache: linked programs' binaries in Cache/GLES/ under the game folder (the working directory), named for
+// a hash of their sources and the driver, so each is compiled once per install rather than once per run (compiling
+// stalls the game, which shows as a hitch the first time an effect or area appears). A driver update changes the name.
+
+std::string s_driver;
+bool s_binaryCache;
+
+uint64_t Hash(const std::string& text, uint64_t hash = 0xCBF29CE484222325ull) {
+    for (unsigned char c : text) {
+        hash = (hash ^ c) * 0x100000001B3ull;
+    }
+
+    return hash;
+}
+
+std::string ProgramCachePath(const std::string& vertexSource, const std::string& fragmentSource) {
+    if (!s_binaryCache) {
+        return std::string();
+    }
+
+    uint64_t hash = Hash(fragmentSource, Hash(vertexSource, Hash(s_driver)));
+    return Format("Cache/GLES/%016llx.bin", static_cast<unsigned long long>(hash));
+}
+
+GLuint LoadProgramBinary(const std::string& path) {
+    if (path.empty()) {
+        return 0;
+    }
+
+    FILE* file = fopen(path.c_str(), "rb");
+
+    if (!file) {
+        return 0;
+    }
+
+    GLenum format = 0;
+    std::vector<uint8_t> binary;
+
+    if (fread(&format, sizeof(format), 1, file) == 1) {
+        fseek(file, 0, SEEK_END);
+        long size = ftell(file) - static_cast<long>(sizeof(format));
+        fseek(file, sizeof(format), SEEK_SET);
+
+        if (size > 0) {
+            binary.resize(static_cast<size_t>(size));
+
+            if (fread(binary.data(), 1, binary.size(), file) != binary.size()) {
+                binary.clear();
+            }
+        }
+    }
+
+    fclose(file);
+
+    if (binary.empty()) {
+        return 0;
+    }
+
+    GLuint program = glCreateProgram();
+    glProgramBinary(program, format, binary.data(), static_cast<GLsizei>(binary.size()));
+
+    GLint ok = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+
+    if (!ok) {
+        // A driver that doesn't take back what it saved (the emulator's): the cache is off for the run, rather than
+        // saving programs it will never load.
+        char log[512] = {};
+        glGetProgramInfoLog(program, sizeof(log) - 1, nullptr, log);
+        Log("Program cache: the driver refused a saved program (%s); off for this run", log);
+        s_binaryCache = false;
+
+        glDeleteProgram(program);
+        glGetError();
+        return 0;
+    }
+
+    GetStats().programsCached++;
+    return program;
+}
+
+void SaveProgramBinary(const std::string& path, GLuint program) {
+    if (path.empty()) {
+        return;
+    }
+
+    GLint length = 0;
+    glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &length);
+
+    if (length <= 0) {
+        return;
+    }
+
+    std::vector<uint8_t> binary(static_cast<size_t>(length));
+    GLenum format = 0;
+    glGetProgramBinary(program, length, nullptr, &format, binary.data());
+
+    std::string temporary = path + ".tmp";
+
+    if (FILE* file = fopen(temporary.c_str(), "wb")) {
+        bool written = fwrite(&format, sizeof(format), 1, file) == 1 && fwrite(binary.data(), 1, binary.size(), file) == binary.size();
+        fclose(file);
+
+        if (written) {
+            rename(temporary.c_str(), path.c_str());
+        } else {
+            remove(temporary.c_str());
+        }
+    }
+}
+
+// The locations of a uniform array's elements, each asked for: drivers needn't number them consecutively, and the
+// emulator's doesn't (a first and last that line up don't mean the rest do).
+void ArrayLocations(GLuint program, const char* name, int32_t count, std::vector<GLint>& locations) {
+    locations.clear();
+
+    for (int32_t i = 0; i < count; i++) {
+        locations.push_back(glGetUniformLocation(program, Format("%s[%d]", name, i).c_str()));
+    }
 }
 
 std::unique_ptr<LinkedProgram> Build(const State& s, bool points) {
@@ -1839,37 +1984,49 @@ std::unique_ptr<LinkedProgram> Build(const State& s, bool points) {
         }
     }
 
-    GLuint vertex = Compile(GL_VERTEX_SHADER, vertexSource);
-    GLuint fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource);
+    std::string cachePath = ProgramCachePath(vertexSource, fragmentSource);
+    GLuint program = LoadProgramBinary(cachePath);
 
-    if (!vertex || !fragment) {
-        if (vertex) {
-            glDeleteShader(vertex);
+    if (!program) {
+        GLuint vertex = Compile(GL_VERTEX_SHADER, vertexSource);
+        GLuint fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource);
+
+        if (!vertex || !fragment) {
+            if (vertex) {
+                glDeleteShader(vertex);
+            }
+
+            if (fragment) {
+                glDeleteShader(fragment);
+            }
+
+            return linked;
         }
 
-        if (fragment) {
-            glDeleteShader(fragment);
+        program = glCreateProgram();
+        glAttachShader(program, vertex);
+        glAttachShader(program, fragment);
+
+        if (!cachePath.empty()) {
+            glProgramParameteri(program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
         }
 
-        return linked;
-    }
+        glLinkProgram(program);
+        glDeleteShader(vertex);
+        glDeleteShader(fragment);
 
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vertex);
-    glAttachShader(program, fragment);
-    glLinkProgram(program);
-    glDeleteShader(vertex);
-    glDeleteShader(fragment);
+        GLint ok = 0;
+        glGetProgramiv(program, GL_LINK_STATUS, &ok);
 
-    GLint ok = 0;
-    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[2048] = {};
+            glGetProgramInfoLog(program, sizeof(log) - 1, nullptr, log);
+            Log("GLSL link failed: %s", log);
+            glDeleteProgram(program);
+            return linked;
+        }
 
-    if (!ok) {
-        char log[2048] = {};
-        glGetProgramInfoLog(program, sizeof(log) - 1, nullptr, log);
-        Log("GLSL link failed: %s", log);
-        glDeleteProgram(program);
-        return linked;
+        SaveProgramBinary(cachePath, program);
     }
 
     linked->id = program;
@@ -1897,16 +2054,12 @@ std::unique_ptr<LinkedProgram> Build(const State& s, bool points) {
         }
     }
 
-    GLuint block = glGetUniformBlockIndex(program, "GxVertexEnv");
-
-    if (block != GL_INVALID_INDEX) {
-        glUniformBlockBinding(program, block, 0);
+    if (vertexProgram) {
+        ArrayLocations(program, "u_vertexEnv", vertexProgram->envCount, linked->vertexEnv);
     }
 
-    block = glGetUniformBlockIndex(program, "GxFragmentEnv");
-
-    if (block != GL_INVALID_INDEX) {
-        glUniformBlockBinding(program, block, 1);
+    if (fragmentProgram) {
+        ArrayLocations(program, "u_fragmentEnv", fragmentProgram->envCount, linked->fragmentEnv);
     }
 
     return linked;
@@ -2082,22 +2235,37 @@ void UploadUniforms(LinkedProgram& program) {
     }
 }
 
-void UploadEnv() {
+// Uploads the program.env parameters that changed since the program last drew, in runs of consecutive ones.
+void UploadEnvArray(const std::vector<GLint>& locations, const float (*env)[4], const uint32_t* stamps, uint32_t since) {
+    int32_t count = static_cast<int32_t>(locations.size());
+    int32_t i = 0;
+
+    while (i < count) {
+        if (stamps[i] <= since || locations[i] < 0) {
+            i++;
+            continue;
+        }
+
+        int32_t first = i;
+
+        while (i < count && stamps[i] > since && locations[i] >= 0 && locations[i] == locations[first] + (i - first)) {
+            i++;
+        }
+
+        glUniform4fv(locations[first], i - first, env[first]);
+    }
+}
+
+void UploadEnv(LinkedProgram& program) {
     State& s = Get();
 
-    if (s.vertexEnvDirtyMax >= s.vertexEnvDirtyMin) {
-        glBindBuffer(GL_UNIFORM_BUFFER, s_vertexEnvBuffer);
-        glBufferSubData(GL_UNIFORM_BUFFER, s.vertexEnvDirtyMin * 16, (s.vertexEnvDirtyMax - s.vertexEnvDirtyMin + 1) * 16, s.vertexEnv[s.vertexEnvDirtyMin]);
-        s.vertexEnvDirtyMin = kEnvParams;
-        s.vertexEnvDirtyMax = -1;
+    if (program.envStamp == s.envStamp) {
+        return;
     }
 
-    if (s.fragmentEnvDirtyMax >= s.fragmentEnvDirtyMin) {
-        glBindBuffer(GL_UNIFORM_BUFFER, s_fragmentEnvBuffer);
-        glBufferSubData(GL_UNIFORM_BUFFER, s.fragmentEnvDirtyMin * 16, (s.fragmentEnvDirtyMax - s.fragmentEnvDirtyMin + 1) * 16, s.fragmentEnv[s.fragmentEnvDirtyMin]);
-        s.fragmentEnvDirtyMin = kEnvParams;
-        s.fragmentEnvDirtyMax = -1;
-    }
+    UploadEnvArray(program.vertexEnv, s.vertexEnv, s.vertexEnvStamps, program.envStamp);
+    UploadEnvArray(program.fragmentEnv, s.fragmentEnv, s.fragmentEnvStamps, program.envStamp);
+    program.envStamp = s.envStamp;
 }
 
 // Points each attribute the program reads at its array, or gives it the array's constant.
@@ -2179,6 +2347,38 @@ void SetupAttribs(const LinkedProgram& program) {
 
 namespace GlEs {
 
+bool PrepareDrawTimed(GLenum mode);
+
+// Diagnostics: the current program's program.env uniforms against the values set.
+void TraceProgramEnv() {
+    if (!s_current || !s_current->valid) {
+        return;
+    }
+
+    State& s = Get();
+    int32_t mismatches = 0;
+
+    for (int32_t pass = 0; pass < 2; pass++) {
+        const std::vector<GLint>& locations = pass ? s_current->fragmentEnv : s_current->vertexEnv;
+        const float (*env)[4] = pass ? s.fragmentEnv : s.vertexEnv;
+
+        for (size_t i = 0; i < locations.size(); i++) {
+            if (locations[i] < 0) {
+                continue;
+            }
+
+            float value[4] = {};
+            glGetUniformfv(s_current->id, locations[i], value);
+
+            if (memcmp(value, env[i], sizeof(value)) && mismatches++ < 6) {
+                Trace("  %s env[%d] (location %d): program has %.3f %.3f %.3f %.3f, set %.3f %.3f %.3f %.3f", pass ? "fragment" : "vertex", static_cast<int32_t>(i), locations[i], value[0], value[1], value[2], value[3], env[i][0], env[i][1], env[i][2], env[i][3]);
+            }
+        }
+    }
+
+    Trace("  env: %d of %d vertex and %d fragment parameters differ (program stamp %u, now %u)", mismatches, static_cast<int32_t>(s_current->vertexEnv.size()), static_cast<int32_t>(s_current->fragmentEnv.size()), s_current->envStamp, s.envStamp);
+}
+
 void TranslateArbProgram(ArbProgram& program, const char* text, size_t length) {
     Translator translator(program, program.target == kVertexProgram);
 
@@ -2191,15 +2391,11 @@ void TranslateArbProgram(ArbProgram& program, const char* text, size_t length) {
 void ProgramsInitialize() {
     ProgramsReset();
 
-    glGenBuffers(1, &s_vertexEnvBuffer);
-    glBindBuffer(GL_UNIFORM_BUFFER, s_vertexEnvBuffer);
-    glBufferData(GL_UNIFORM_BUFFER, kEnvParams * 16, nullptr, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 0, s_vertexEnvBuffer);
+    GLint formats = 0;
+    glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &formats);
+    s_binaryCache = formats > 0 && (mkdir("Cache", 0777) == 0 || errno == EEXIST) && (mkdir("Cache/GLES", 0777) == 0 || errno == EEXIST);
+    s_driver = std::string(reinterpret_cast<const char*>(glGetString(GL_RENDERER))) + "|" + reinterpret_cast<const char*>(glGetString(GL_VERSION)) + "|1";
 
-    glGenBuffers(1, &s_fragmentEnvBuffer);
-    glBindBuffer(GL_UNIFORM_BUFFER, s_fragmentEnvBuffer);
-    glBufferData(GL_UNIFORM_BUFFER, kEnvParams * 16, nullptr, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 1, s_fragmentEnvBuffer);
 }
 
 void ProgramsReset() {
@@ -2207,8 +2403,6 @@ void ProgramsReset() {
     s_programs.clear();
     s_current = nullptr;
     s_usedProgram = 0;
-    s_vertexEnvBuffer = 0;
-    s_fragmentEnvBuffer = 0;
 
     for (AttribCache& cache : s_attribCache) {
         cache = AttribCache();
@@ -2216,6 +2410,18 @@ void ProgramsReset() {
 }
 
 bool PrepareDraw(GLenum mode) {
+    Stats& timing = GetStats();
+    uint64_t start = timing.enabled ? NowNs() : 0;
+    bool ready = PrepareDrawTimed(mode);
+
+    if (start) {
+        timing.prepareNs += NowNs() - start;
+    }
+
+    return ready;
+}
+
+bool PrepareDrawTimed(GLenum mode) {
     State& s = Get();
     bool points = mode == GL_POINTS;
 
@@ -2228,8 +2434,13 @@ bool PrepareDraw(GLenum mode) {
         auto found = s_programs.find(key);
 
         if (found == s_programs.end()) {
+            uint64_t start = GetStats().enabled ? NowNs() : 0;
             found = s_programs.emplace(key, Build(s, points)).first;
-            GetStats().programsBuilt++;
+
+            if (start) {
+                GetStats().programsBuilt++;
+                GetStats().buildNs += NowNs() - start;
+            }
         }
 
         s_current = found->second.get();
@@ -2257,7 +2468,7 @@ bool PrepareDraw(GLenum mode) {
         s_usedProgram = program.id;
     }
 
-    UploadEnv();
+    UploadEnv(program);
     UploadUniforms(program);
     SetupAttribs(program);
     return true;

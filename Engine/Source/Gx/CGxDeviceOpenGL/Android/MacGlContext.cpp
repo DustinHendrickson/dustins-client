@@ -257,7 +257,12 @@ void AndroidGlSwapBuffers() {
     GlEsFrameDone();
 
     if (s_current->m_surface != EGL_NO_SURFACE) {
+        uint64_t start = GlEsNowNs();
         eglSwapBuffers(s_current->m_display, s_current->m_surface);
+
+        if (start) {
+            GlEsSwapTime(GlEsNowNs() - start);
+        }
     }
 
     // In the background there is nothing to draw to: the game runs on (its connection stays up) at a slow tick.

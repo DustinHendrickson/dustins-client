@@ -40,6 +40,17 @@ enum Conversion {
 };
 
 std::vector<uint8_t> s_buffer;
+
+// Diagnostics: the time an upload takes, conversion and DXT decoding included.
+struct UploadTimer {
+    uint64_t m_start = GetStats().enabled ? NowNs() : 0;
+
+    ~UploadTimer() {
+        if (m_start) {
+            GetStats().textureNs += NowNs() - m_start;
+        }
+    }
+};
 GLuint s_copyFramebuffer;
 
 GLenum BindingTarget(GLenum target) {
@@ -505,6 +516,7 @@ void GxEs_glTexParameteri(GLenum target, GLenum pname, GLint param) {
 }
 
 void GxEs_glTexImage2D(GLenum target, GLint level, GLint internalFormat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const GLvoid* pixels) {
+    UploadTimer timer;
     Texture& texture = BoundTexture(target);
     GLint esInternalFormat;
     ChooseFormat(texture, internalFormat, format, type, &esInternalFormat);
@@ -516,6 +528,7 @@ void GxEs_glTexImage2D(GLenum target, GLint level, GLint internalFormat, GLsizei
 }
 
 void GxEs_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const GLvoid* pixels) {
+    UploadTimer timer;
     Texture& texture = BoundTexture(target);
 
     if (!texture.format) {
@@ -529,6 +542,7 @@ void GxEs_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffs
 }
 
 void APIENTRY GxEs_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalFormat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const GLvoid* data) {
+    UploadTimer timer;
     State& s = Get();
     Texture& texture = BoundTexture(target);
     RecordSize(texture, level, width, height);
@@ -550,6 +564,7 @@ void APIENTRY GxEs_glCompressedTexImage2D(GLenum target, GLint level, GLenum int
 }
 
 void APIENTRY GxEs_glCompressedTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLsizei imageSize, const GLvoid* data) {
+    UploadTimer timer;
     Texture& texture = BoundTexture(target);
 
     if (texture.conversion == Conversion_Compressed) {

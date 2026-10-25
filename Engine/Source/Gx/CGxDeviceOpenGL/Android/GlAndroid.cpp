@@ -20,6 +20,12 @@ State& Get() {
     return *s_state;
 }
 
+uint64_t NowNs() {
+    timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return static_cast<uint64_t>(now.tv_sec) * 1000000000ull + static_cast<uint64_t>(now.tv_nsec);
+}
+
 Stats& GetStats() {
     static Stats s_stats;
     return s_stats;
@@ -109,6 +115,7 @@ void TraceDraw(GLenum mode, GLsizei count) {
     glActiveTexture(GL_TEXTURE0 + s.activeUnit);
 
     Trace("  vertex env c28-30: %.3f %.3f %.3f %.3f / %.3f %.3f %.3f %.3f / %.3f %.3f %.3f %.3f; fragment c0-1: %.3f %.3f %.3f %.3f / %.3f %.3f %.3f %.3f; fog %.2f-%.2f", s.vertexEnv[28][0], s.vertexEnv[28][1], s.vertexEnv[28][2], s.vertexEnv[28][3], s.vertexEnv[29][0], s.vertexEnv[29][1], s.vertexEnv[29][2], s.vertexEnv[29][3], s.vertexEnv[30][0], s.vertexEnv[30][1], s.vertexEnv[30][2], s.vertexEnv[30][3], s.fragmentEnv[0][0], s.fragmentEnv[0][1], s.fragmentEnv[0][2], s.fragmentEnv[0][3], s.fragmentEnv[1][0], s.fragmentEnv[1][1], s.fragmentEnv[1][2], s.fragmentEnv[1][3], s.fogStart, s.fogEnd);
+    TraceProgramEnv();
     Trace("  vertex env c2-5: %.3f %.3f %.3f %.3f / %.3f %.3f %.3f %.3f / %.3f %.3f %.3f %.3f / %.3f %.3f %.3f %.3f", s.vertexEnv[2][0], s.vertexEnv[2][1], s.vertexEnv[2][2], s.vertexEnv[2][3], s.vertexEnv[3][0], s.vertexEnv[3][1], s.vertexEnv[3][2], s.vertexEnv[3][3], s.vertexEnv[4][0], s.vertexEnv[4][1], s.vertexEnv[4][2], s.vertexEnv[4][3], s.vertexEnv[5][0], s.vertexEnv[5][1], s.vertexEnv[5][2], s.vertexEnv[5][3]);
 }
 
@@ -127,16 +134,28 @@ void FrameDone() {
     stats.frames++;
     CheckError("frame");
 
+    uint64_t nowNs = NowNs();
+
+    if (stats.lastFrameNs) {
+        uint64_t frameNs = nowNs - stats.lastFrameNs;
+        stats.worstFrameNs = frameNs > stats.worstFrameNs ? frameNs : stats.worstFrameNs;
+        stats.longFrames += frameNs > 50000000ull;
+    }
+
+    stats.lastFrameNs = nowNs;
+
     static time_t s_last;
     time_t now = time(nullptr);
 
     if (now != s_last) {
         s_last = now;
-        __android_log_print(ANDROID_LOG_INFO, "WoW", "GL: %u frames, %u draws (%u skipped, %u ARB vertex, %u ARB fragment, %u points), %u programs built", stats.frames, stats.draws, stats.skipped, stats.arbVertex, stats.arbFragment, stats.points, stats.programsBuilt);
+        __android_log_print(ANDROID_LOG_INFO, "WoW", "GL: %u frames, worst %.0f ms, %u over 50 ms; %u draws (%u skipped, %u ARB vertex, %u ARB fragment, %u points); %u programs built (%u cached) in %.0f ms, textures %.0f ms, draw setup %.0f ms, swap %.0f ms",
+                            stats.frames, stats.worstFrameNs / 1e6, stats.longFrames, stats.draws, stats.skipped, stats.arbVertex, stats.arbFragment, stats.points, stats.programsBuilt, stats.programsCached, stats.buildNs / 1e6, stats.textureNs / 1e6, stats.prepareNs / 1e6, stats.swapNs / 1e6);
         Stats reset;
         reset.enabled = true;
         reset.traceFrames = stats.traceFrames;
         reset.frames = stats.frames > 2 ? 3 : stats.frames;
+        reset.lastFrameNs = stats.lastFrameNs;
         stats = reset;
     }
 }
@@ -351,6 +370,16 @@ void GlEsContextCreated() {
 
 void GlEsFrameDone() {
     FrameDone();
+}
+
+void GlEsSwapTime(uint64_t ns) {
+    if (GetStats().enabled) {
+        GetStats().swapNs += ns;
+    }
+}
+
+uint64_t GlEsNowNs() {
+    return GetStats().enabled ? NowNs() : 0;
 }
 
 void GlEsContextDestroyed() {
@@ -1213,8 +1242,7 @@ void SetEnv(GLenum target, GLuint index, GLsizei count, const GLfloat* params) {
     State& s = Get();
     bool vertex = target == kVertexProgram;
     float (*env)[4] = vertex ? s.vertexEnv : s.fragmentEnv;
-    int32_t& dirtyMin = vertex ? s.vertexEnvDirtyMin : s.fragmentEnvDirtyMin;
-    int32_t& dirtyMax = vertex ? s.vertexEnvDirtyMax : s.fragmentEnvDirtyMax;
+    uint32_t* stamps = vertex ? s.vertexEnvStamps : s.fragmentEnvStamps;
 
     if (index >= static_cast<GLuint>(kEnvParams)) {
         return;
@@ -1224,12 +1252,17 @@ void SetEnv(GLenum target, GLuint index, GLsizei count, const GLfloat* params) {
         count = kEnvParams - index;
     }
 
-    memcpy(env[index], params, sizeof(float) * 4 * count);
+    // Only parameters whose values change are stamped: the device sends whole ranges each draw.
+    uint32_t stamp = ++s.envStamp;
 
-    int32_t first = static_cast<int32_t>(index);
-    int32_t last = first + count - 1;
-    dirtyMin = first < dirtyMin ? first : dirtyMin;
-    dirtyMax = last > dirtyMax ? last : dirtyMax;
+    for (GLsizei i = 0; i < count; i++, params += 4) {
+        float* value = env[index + i];
+
+        if (memcmp(value, params, sizeof(float) * 4)) {
+            memcpy(value, params, sizeof(float) * 4);
+            stamps[index + i] = stamp;
+        }
+    }
 }
 
 void APIENTRY EsProgramEnvParameter4fv(GLenum target, GLuint index, const GLfloat* params) {

@@ -45,8 +45,9 @@ fix to the device then serves all three platforms.
   key gets a GLSL ES 3.00 program, compiled once and cached. The rest are uniforms, uploaded per group when changed.
 - **ARB programs to GLSL ES** (`GlAndroidPrograms.cpp`). `glProgramStringARB` translates the game's `arbvp1` /
   `arbfp1` programs (Cg output): every opcode they use, `_SAT`, swizzles and write masks, `A0` relative addressing of
-  parameter arrays, `ARB_fog_linear` and `ARB_fragment_program_shadow`. `program.env` is two uniform buffers that every
-  program shares. All 2,778 programs in the game's shader files translate, compile and link (checked on the emulator's
+  parameter arrays, `ARB_fog_linear` and `ARB_fragment_program_shadow`. `program.env` is a uniform array in each
+  program, which uploads only the parameters that changed since it last drew (uniform buffers rewritten on nearly
+  every draw make mobile drivers copy them). All 2,778 programs in the game's shader files translate, compile and link (checked on the emulator's
   driver). Alpha test, which desktop GL applies after a fragment program, is appended to each.
 - **Stage linking.** A vertex stage is generated for its fragment stage and writes only the varyings it reads.
 - **Textures** (`GlAndroidTextures.cpp`). BGRA and the reversed 4444 / 1555 formats are converted on upload; DXT goes
@@ -60,36 +61,107 @@ fix to the device then serves all three platforms.
   depth back (`glReadPixels` reports the far plane).
 - **Window** (`Android/MacGlContext.cpp`): EGL with an ES 3 context; the surface is made at the game's render size on
   the activity's window and dropped while the app is in the background, when the game keeps running at a slow tick.
-- **Diagnostics:** `adb shell setprop debug.wow.gl 1` logs draw counts and GL errors once a second;
+- **Program cache:** linked programs are saved in `Cache/GLES/` in the game folder, named for their sources and the
+  driver, so each compiles once per install instead of hitching the game the first time an effect appears. The
+  emulator's driver refuses saved programs; the cache then turns itself off for the run.
+- **Diagnostics:** `adb shell setprop debug.wow.gl 1` logs, once a second, frame times (the worst, how many over 50 ms),
+  draw counts, GL errors, and the time spent building programs, uploading textures, in per-draw setup and in the swap;
   `debug.wow.gltrace N` also traces every draw of N frames, checks render-target copies, and writes the generated
   programs to `Logs/gl-programs.txt`.
 
-## Touch and small screens
+## Touch and small screens (milestone 5 plan)
 
-The native input layer owns every finger and decides what it does, so moving, looking and pressing work at once with
-the game's single mouse:
+The game has one keyboard and one mouse; a phone has several fingers at once. The design: **the native input layer
+(`Os/Android/Input.cpp`) owns every finger** and turns each into keys, mouse movement or clicks according to where it
+went down, so a thumb moving, a finger turning the camera and another pressing a button all work together. A Lua
+add-on, **TouchControls** (packed in the APK, installed into `Interface/AddOns` at start like the Switch's
+SwitchControls), draws the on-screen controls in the game's own UI and tells the native layer where they are. The game
+code changes are small hooks; the rules live in the input layer and the add-on.
 
-- **Left third**: a floating joystick where the thumb lands. It sends the movement keys (W/S, strafe Q/E), and
-  pushing it to the edge runs.
-- **Right of it, on the 3D world**: dragging turns the camera and character (mouselook); a quick tap clicks there
-  (selects a unit); a long press right-clicks (talk, loot, attack).
-- **On the UI** (action bars, windows, the minimap, unit frames): taps are left clicks, long presses right clicks,
-  drags drag (items, spells), at the point touched.
-- **Pinch** zooms the camera; a two-finger drag on a window scrolls it.
-- **Overlay buttons** that the `TouchControls` add-on lays out and the native layer presses as keys, so they work
-  with a thumb on the joystick and a finger on the camera: jump, interact (loot / talk / use nearby, the Switch
-  port's), target nearest enemy, target nearest friendly or neutral, open chat, game menu, and a toggle to hide them.
-- **Text**: tapping an edit box opens Android's keyboard; Back closes windows (Escape).
+### How a finger is routed
 
-Small-screen improvements in the `TouchControls` add-on:
+When a finger goes down, the input layer decides what it is, once, for as long as it stays down:
 
-- UI scale from the screen's physical size (density), so text and buttons are readable on a phone; adjustable.
-- Safe areas: the UI keeps clear of the notch, rounded corners and gesture bar (Android's insets).
-- Bigger action buttons and keybind-free labels; auto loot on by default; the Switch port's interact and
-  non-hostile targeting; a compact chat frame.
-- Landscape only, the screen kept on while playing, and a 30 / 60 fps choice for battery.
+1. **On an overlay control** (joystick area, jump, interact, the touch action buttons, ...): that control. The
+   add-on registers each control's screen rectangle and what it does (`TouchControls_SetControl(name, left, bottom,
+   right, top, action)`); the input layer hit-tests these first. Controls press keys or run their binding without
+   touching the mouse, so they work while another finger turns the camera.
+2. **On the game's UI** (a window, an action bar, the minimap, unit frames, chat): the mouse. The input layer asks the
+   game whether a frame takes the mouse at that point (a new hook on `CSimpleTop`, the frame layer's mouse focus); if
+   so the finger is the mouse: tap = left click, hold = right click, drag = left drag (items, spells, sliders), as now.
+3. **Anywhere else, the 3D world**: the camera. Dragging turns the camera (mouselook, as right-drag), a quick tap
+   clicks the world there (selects a unit, as left click), a press-and-hold right-clicks it (talk, loot, attack). A
+   second finger on the world while one is turning starts a **pinch**, which zooms (mouse wheel).
 
-Gamepads use the Switch port's mapping (play / cursor modes, the D-pad menu navigation).
+Only one finger is "the mouse" at a time; while the camera finger is in mouselook, a tap on the UI by another finger
+releases mouselook for the click and resumes it, so turning and clicking an action button don't fight.
+
+### Movement and camera
+
+- **Floating joystick** on the left third of the screen: it appears where the thumb lands. Its direction sends the
+  movement keys (W / S, strafe Q / E, eight directions); pushing to the rim runs, a short push walks (the walk toggle).
+  The game only moves at walk or run speed, so this is all an analog stick can do here. Double-tap the area: autorun.
+- **Camera drag** turns the camera and the character together (mouselook, as holding the right mouse button), so the
+  joystick always moves where you look; with a sensitivity option and the Switch's invert option.
+- **Pinch** to zoom; a two-finger drag on a window scrolls it.
+
+### Overlay controls (TouchControls add-on)
+
+- **Jump**, **Interact** (the Switch port's: loot the nearest body, talk to the nearest NPC, use the nearest object,
+  `SwitchControls_Interact` shared), **Target nearest enemy** (Tab) and **nearest friendly / neutral** (the Switch's
+  `TargetNonHostile`), **Chat** (opens the chat box and the keyboard), **Menu** (Escape), and a **hide controls**
+  toggle for screenshots and cutscenes.
+- **Action buttons**, both styles with an option to switch: a **thumb wheel** (six to eight large buttons fanned
+  around the bottom-right corner, bound to action bar 1, with a button that pages it to bars 2 and 3) and the
+  **default bars enlarged** for touch. The default bars stay usable for drag-and-drop setup either way.
+- Drawn with the game's UI art at a size from the screen's physical size; positions and opacity adjustable in an
+  options panel; saved per character like other add-on settings.
+
+### Small screens
+
+- **UI scale from density**: the UI is sized so that a button is about 9 mm across, whatever the phone (Android's
+  dpi), unless the player sets a scale in the video options.
+- **Safe areas**: `UIParent` is inset by the notch, the rounded corners and the gesture bar (Android's insets), so
+  nothing important sits under them.
+- **Bigger targets**: enlarged action bars, close buttons and scroll bars; tooltips and chat in a readable font size;
+  a compact chat frame that fades when idle.
+- **Text**: tapping an edit box opens Android's keyboard (done); Back closes windows (Escape, done).
+- **Quality of life from the Switch port**: auto loot on by default, interact and non-hostile targeting, back-to-play
+  after windows close (here: windows don't capture the camera finger).
+
+### Performance, battery, lifecycle
+
+- **Frame rate**: 60 fps by default with steady frame pacing (on 90 and 120 Hz displays too), and a **battery saver**
+  option capping at a steady 30; render resolution from the existing smaller modes (1080p, 900p, 720p, 540p of the
+  screen's shape).
+- **Thermals**: Android's performance hints (ADPF) report the game thread's work so the system sizes clocks to it.
+- **Background**: the game keeps its connection with drawing stopped (done); audio pauses; on low memory
+  (`onTrimMemory`) the texture cache is flushed.
+- **Textures**: DXT is decoded to RGBA where the GPU lacks it, four to eight times the memory. The test phone is a
+  Pixel with a Mali GPU, which has no DXT (it has ETC2 and ASTC), so this is the path there: to be measured on it, with
+  transcoding to ETC2 (the same size as DXT, in every ES 3 GPU) as the fix if memory or load times suffer.
+
+### Controllers
+
+Bluetooth and USB gamepads get the Switch port's play / cursor modes and mapping (left stick moves, right stick looks,
+face buttons are action keys), with Android's button names in the hints. Touch and a controller can be used together.
+
+### Game code changes
+
+- A frame-layer hook: does a UI frame take the mouse at a point (for routing fingers).
+- `WoW/Source/Ui/Android/TouchControlsScript.cpp`: the add-on's Lua functions (controls' rectangles and actions,
+  options, density, insets, mode), as `SwitchControlsScript.cpp` is for the Switch; Interact and non-hostile
+  targeting shared with it.
+- Pausing and resuming sound with the app; releasing caches on low memory.
+
+### Order of work
+
+1. Finger routing with the frame-layer hook; camera drag, tap and hold on the world; pinch.
+2. Joystick and overlay controls with the TouchControls add-on and its Lua bridge.
+3. Action buttons (wheel and enlarged bars, switchable), options panel.
+4. Small-screen changes: density scale, safe areas, bigger targets, chat.
+5. Frame rate cap and pacing, background audio, low memory; controllers.
+6. On the phone: frame times (`debug.wow.gl`), texture memory, battery; tuning.
 
 ## Milestones
 

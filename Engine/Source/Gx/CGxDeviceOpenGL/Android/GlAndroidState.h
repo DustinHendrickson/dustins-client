@@ -109,6 +109,7 @@ struct ArbProgram {
     uint32_t inputs = 0;        // vertex: attribute locations read; fragment: varyings read
     uint32_t outputs = 0;       // vertex: varyings written
     uint32_t samplers[kSamplers] = {};  // fragment: per unit, Sampler in GlAndroidPrograms.cpp
+    int32_t envCount = 0;       // program.env parameters it reads: [0, envCount)
     bool fogLinear = false;     // fragment: OPTION ARB_fog_linear
     bool pointSize = false;     // vertex: writes result.pointsize
 };
@@ -195,12 +196,13 @@ struct State {
     GLuint boundVertexProgram = 0;
     GLuint boundFragmentProgram = 0;
     GLint programErrorPosition = -1;
+    // program.env, with the stamp of each parameter's last change (from envStamp), so a program uploads only what
+    // changed since it last drew.
     float vertexEnv[kEnvParams][4] = {};
     float fragmentEnv[kEnvParams][4] = {};
-    int32_t vertexEnvDirtyMin = kEnvParams;
-    int32_t vertexEnvDirtyMax = -1;
-    int32_t fragmentEnvDirtyMin = kEnvParams;
-    int32_t fragmentEnvDirtyMax = -1;
+    uint32_t vertexEnvStamps[kEnvParams] = {};
+    uint32_t fragmentEnvStamps[kEnvParams] = {};
+    uint32_t envStamp = 1;
 
     // Changes that pick a different program, and the uniform groups' versions.
     bool programDirty = true;
@@ -227,14 +229,27 @@ struct Stats {
     uint32_t arbFragment = 0;
     uint32_t points = 0;
     uint32_t programsBuilt = 0;
+    uint32_t programsCached = 0;   // of those, loaded from the program cache
     uint32_t frames = 0;
-    int32_t traceFrames = 0;    // debug.wow.gltrace=N: every draw of the N frames after the first second, in detail
+    int32_t traceFrames = 0;
+    // Time, in nanoseconds since the last report: frames (the worst one and how many ran long), and the work in them
+    // that can make one long: building programs, uploading textures (DXT decoding included), the per-draw setup, and the
+    // swap (where the driver waits for the GPU).
+    uint64_t lastFrameNs = 0;
+    uint64_t worstFrameNs = 0;
+    uint32_t longFrames = 0;
+    uint64_t buildNs = 0;
+    uint64_t textureNs = 0;
+    uint64_t prepareNs = 0;
+    uint64_t swapNs = 0;    // debug.wow.gltrace=N: every draw of the N frames after the first second, in detail
 };
 
 Stats& GetStats();
 void CheckError(const char* where);
 void FrameDone();
+uint64_t NowNs();
 void TraceDraw(GLenum mode, GLsizei count);
+void TraceProgramEnv();
 void Trace(const char* format, ...);
 
 inline void Touch(Group group) {

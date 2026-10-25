@@ -198,6 +198,8 @@ void GlEsTexturesReset();
 
 // After each frame, before the swap: diagnostics (GlAndroidState.h Stats).
 void GlEsFrameDone();
+uint64_t GlEsNowNs();
+void GlEsSwapTime(uint64_t ns);
 
 #if !defined(WOWDECOMP_GLES_IMPLEMENTATION)
 #define glAlphaFunc GxEs_glAlphaFunc
