@@ -234,6 +234,7 @@ uint32_t s_latch;
 int32_t s_latchFinger = -1;
 C2iVector s_tapThroughPoint;
 bool (*s_wheelQuery)();
+bool (*s_multiLineQuery)();
 void (*s_lowMemoryHandler)();
 void (*s_backgroundHandler)();
 std::atomic<bool> s_lowMemory;
@@ -1370,6 +1371,13 @@ void PollKeyboard(uint64_t now) {
                 } else {
                     TypeText(text);
                 }
+
+                // OK (or the keyboard's Done) is the box's Enter: the chat line goes, a popup accepts, the password
+                // logs in. A phone has no Enter key of its own. Not in a box of several lines, where Enter is a new
+                // line.
+                if (!s_multiLineQuery || !s_multiLineQuery()) {
+                    TapKey(KEY_ENTER);
+                }
             }
 
             break;
@@ -1642,6 +1650,10 @@ void AndroidInputSetPointQuery(int32_t (*query)()) {
 
 void AndroidInputSetWheelQuery(bool (*query)()) {
     s_wheelQuery = query;
+}
+
+void AndroidInputSetMultiLineQuery(bool (*query)()) {
+    s_multiLineQuery = query;
 }
 
 void AndroidInputSetLatch(uint32_t modifiers) {

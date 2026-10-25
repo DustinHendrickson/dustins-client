@@ -30,6 +30,7 @@
 #include "Engine/Source/Base/Coordinate.h"
 #include <cstring>
 #include "Engine/Source/Event/Types.h"
+#include "Engine/Source/Frame/CSimpleEditBox.h"
 #include "Engine/Source/Frame/CSimpleTop.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "Engine/Source/Gx/CGxDeviceOpenGL/Android/GlAndroidContext.h"
@@ -132,6 +133,12 @@ bool UiAtPoint(float x, float y) {
     }
 
     return false;
+}
+
+// Whether the focused text box has several lines (CSimpleEditBox's multi-line flag).
+bool FocusIsMultiLine() {
+    CSimpleEditBox* box = CSimpleEditBox::s_currentFocus;
+    return box && (box->m_editBoxFlags & 0x2);
 }
 
 // A key by its binding name, as the game's key bindings write them.
@@ -439,6 +446,7 @@ void TouchControlsInitialize() {
     AndroidInputSetPointQuery(PointUnderMouse);
     AndroidInputSetWheelQuery(WheelUnderMouse);
     AndroidInputSetUiAtPointQuery(UiAtPoint);
+    AndroidInputSetMultiLineQuery(FocusIsMultiLine);
 }
 
 void TouchControlsRegisterScriptFunctions() {

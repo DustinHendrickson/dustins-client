@@ -248,7 +248,7 @@ vehicles' leave button, ground-targeted spells.
   world turns the camera and the character, a tap on the world doesn't move anything, and the jump, menu, page and
   wheel controls press their keys.
   - The look: every control is a round icon (`SetPortraitToTexture`) in the minimap's ring, lit while a finger holds
-    it (`TouchControls_IsHeld`). The wheel is packed into the corner around jump, no higher than about half the screen (so the right side above it is open for turning the camera), each button clear of its neighbours by a fingertip. It shows 12, 8, 6 or 4 buttons (a menu option): fewer are bigger, and the page button steps through the bar's keys in groups ("1a", "1b") before turning to the next page with anything on it (in a stance or form page 1 is that bar). It only shows what keys 1 to = cast now
+    it (`TouchControls_IsHeld`). The wheel is packed into the corner around jump, no higher than about half the screen (so the right side above it is open for turning the camera), each button clear of its neighbours by a fingertip. It shows 12, 8, 6 or 4 buttons (a menu option): fewer are bigger, and the page button steps through the bar a wheel at a time, numbered 1, 2, 3... in order with none skipped (in a stance or form page 1 is that bar). It only shows what keys 1 to = cast now
     (the main bar's page, a stance's or possession's bar, a vehicle's), with range, mana, cooldown and active states;
     the game's action bars are put away, leaving the experience bar at the screen's edge and the stance and pet bars
     above it. The page button pages to the next page with anything on it, and play starts on one.
@@ -287,8 +287,9 @@ vehicles' leave button, ground-targeted spells.
   - Holding a wheel button still a moment opens the spellbook (the control's hold key, TOGGLESPELLBOOK's binding),
     to drag a spell out and tap the wheel button to put it there; "Lock buttons" in the menu turns that off.
   - The menu takes most of the screen, on a solid background: two framed panels, the game's menu buttons in a grid
-    with their names and the bag slots on the left, the settings on the right. Bags go on with a hold (a right-click)
-    in the bags; a bag slot dragged out of the menu closes it and opens the bags to drop it in.
+    with their names and the bag slots on the left, the settings on the right. Each bag slot is labelled with its
+    slots; a tap on one of the four opens its sheet: Open, Take off (into a free space in another bag, empty bags
+    only, with the reason when it can't), and the spare bags in the bags, a tap to put one in or swap.
   - The add-on's own keys are F14 to F19: F13 is Print Screen to the game (the same key code), so interact moved off
     it, and a binding left on it is cleared.
   - Interact and the targetings sit in a row along the bottom, left of the wheel; the quest tracker is a short block

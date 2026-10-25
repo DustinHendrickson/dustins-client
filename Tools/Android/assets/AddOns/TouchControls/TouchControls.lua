@@ -20,7 +20,7 @@ BINDING_NAME_TOUCHCONTROLS_NEXTGROUP = "Touch controls: next buttons"
 BINDING_NAME_TOUCHCONTROLS_BAGS = "Touch controls: all bags"
 BINDING_NAME_TOUCHCONTROLS_RADIAL = "Touch controls: actions"
 BINDING_NAME_TOUCHCONTROLS_ASSIGN = "Touch controls: put a spell on the held button"
-BINDING_NAME_TOUCHCONTROLS_DISMOUNT = "Dismount"
+BINDING_NAME_TOUCHCONTROLS_DISMOUNT = "Dismount or leave the vehicle"
 BINDING_NAME_TOUCHCONTROLS_FOLLOW = "Follow target"
 BINDING_NAME_TOUCHCONTROLS_MODIFIER = "Touch controls: Shift / Ctrl / Alt for the next tap"
 
@@ -268,6 +268,7 @@ AddButton("character", nil, "C")
 AddButton("bags", "Interface\\Icons\\INV_Misc_Bag_08", "F19")
 AddButton("actions", "Interface\\Icons\\Ability_Rogue_Disguise", "CTRL-F16")
 AddButton("modifier", "Interface\\Icons\\INV_Misc_Key_03", "CTRL-F18")
+AddButton("leave", "Interface\\Icons\\Spell_Shadow_SacrificialShield", "CTRL-F14", "round")
 
 -- The modifier button shows the latched modifier, and glows while one waits for a finger.
 buttons.modifier.text = buttons.modifier:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -364,8 +365,8 @@ local radialEntries = {
     { name = "radialStopAttack", action = "STOPATTACK", label = "Stop attack", icon = "Interface\\Icons\\Ability_Rogue_FeignDeath", spare = "SHIFT-F18" },
     { name = "radialPetAttack", action = "PETATTACK", label = "Pet attack", icon = "Interface\\Icons\\Ability_GhoulFrenzy", spare = "SHIFT-F19" },
     { name = "radialSkull", action = "RAIDTARGET8", label = "Mark skull", icon = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_8", spare = "SHIFT-CTRL-F14" },
-    { name = "radialNameplates", action = "NAMEPLATES", label = "Nameplates", icon = "Interface\\Icons\\INV_Misc_Note_02", spare = "SHIFT-CTRL-F15" },
-    { name = "radialDismount", action = "TOUCHCONTROLS_DISMOUNT", label = "Dismount", icon = "Interface\\Icons\\Ability_Mount_RidingHorse", spare = "CTRL-F14" },
+    { name = "radialNameplates", action = "ALLNAMEPLATES", label = "Nameplates", icon = "Interface\\Icons\\INV_Misc_Note_02", spare = "SHIFT-CTRL-F15" },
+    { name = "radialDismount", action = "TOUCHCONTROLS_DISMOUNT", label = "Dismount / leave", icon = "Interface\\Icons\\Ability_Mount_RidingHorse", spare = "CTRL-F14" },
     { name = "radialScreenshot", action = "SCREENSHOT", label = "Screenshot", icon = "Interface\\Icons\\INV_Misc_Spyglass_03", spare = "ALT-F19" },
 }
 
@@ -831,10 +832,10 @@ local settingsPanel = MakePanel(SETTINGS or "Settings")
 local bagsTitle = gamePanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 bagsTitle:SetText(BAGSLOTTEXT or "Bags")
 
--- How to put bags on and take them off with a finger (FillMenu's hooks below).
+-- What a tap on the bags does (the bag sheet below).
 local bagsHint = gamePanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 bagsHint:SetJustifyH("LEFT")
-bagsHint:SetText("Hold a bag in your bags to put it on. Drag one out of here to take it off, or tap here holding one to swap.")
+bagsHint:SetText("Tap a bag to open it, take it off, or put a different bag in its place.")
 
 local microHolder = CreateFrame("Frame", nil, menu)
 local bagHolder = CreateFrame("Frame", nil, menu)
@@ -1131,19 +1132,354 @@ local function CloseMenu()
     menu:Hide()
 end
 
-for _, name in ipairs(bags) do
-    if _G[name] then
-        _G[name]:HookScript("OnClick", CloseMenu)
+-- The backpack and the key ring only open: a tap does that, and the menu gets out of the way.
+MainMenuBarBackpackButton:HookScript("OnClick", CloseMenu)
+KeyRingButton:HookScript("OnClick", CloseMenu)
 
-        -- A bag dragged out of its slot: the menu gets out of the way and the bags open, for a tap on an empty space to
-        -- put it in (the game takes empty bags off only).
-        _G[name]:HookScript("OnDragStart", function()
-            if CursorHasItem() then
-                menu:Hide()
-                OpenAllBags(true)
-            end
-        end)
+-- A bag slot in the menu: a tap over it opens the bag sheet, with what can be done to that slot in buttons. The game's
+-- own button under it still shows the bag; holding shows its tooltip.
+local BAG_NAMES = { BACKPACK_TOOLTIP or "Backpack", "Bag 1", "Bag 2", "Bag 3", "Bag 4", KEYRING or "Key Ring" }
+local bagLabels = {}        -- under each bag in the menu: its name and slots
+local bagCovers = {}        -- over each of the four bag slots, by bag (1 - 4)
+local bagSheet, UpdateBagLabels
+
+-- In a block of its own: the main chunk is near Lua's 200 locals.
+do
+
+bagSheet = CreateFrame("Frame", "TouchControlsBagSheet", menu)
+bagSheet:SetBackdrop({
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+    tile = true, tileSize = 32, edgeSize = 32,
+    insets = { left = 11, right = 12, top = 12, bottom = 11 },
+})
+bagSheet:EnableMouse(true)
+bagSheet:Hide()
+
+local bagSheetFill = bagSheet:CreateTexture(nil, "BACKGROUND")
+bagSheetFill:SetTexture(0.06, 0.06, 0.06, 0.97)
+bagSheetFill:SetPoint("TOPLEFT", 11, -12)
+bagSheetFill:SetPoint("BOTTOMRIGHT", -12, 11)
+
+-- Behind the sheet, over the rest of the menu: a tap there puts the sheet away.
+local bagSheetShade = CreateFrame("Button", nil, menu)
+bagSheetShade:SetAllPoints(menu)
+bagSheetShade:Hide()
+bagSheetShade:SetScript("OnClick", function() bagSheet:Hide() end)
+local bagSheetShadeFill = bagSheetShade:CreateTexture(nil, "BACKGROUND")
+bagSheetShadeFill:SetAllPoints()
+bagSheetShadeFill:SetTexture(0, 0, 0, 0.55)
+
+bagSheet:SetScript("OnShow", function() bagSheetShade:Show() end)
+bagSheet:SetScript("OnHide", function() bagSheetShade:Hide() end)
+menu:HookScript("OnHide", function() bagSheet:Hide() end)
+
+local bagSheetIcon = bagSheet:CreateTexture(nil, "ARTWORK")
+bagSheetIcon:SetWidth(36)
+bagSheetIcon:SetHeight(36)
+bagSheetIcon:SetPoint("TOPLEFT", 24, -24)
+
+local bagSheetTitle = bagSheet:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+bagSheetTitle:SetPoint("TOPLEFT", bagSheetIcon, "TOPRIGHT", 10, -1)
+bagSheetTitle:SetJustifyH("LEFT")
+
+local bagSheetInfo = bagSheet:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+bagSheetInfo:SetPoint("TOPLEFT", bagSheetTitle, "BOTTOMLEFT", 0, -4)
+bagSheetInfo:SetJustifyH("LEFT")
+
+local function SheetButton(name, text)
+    local button = CreateFrame("Button", name, bagSheet, "UIPanelButtonTemplate")
+    button:SetWidth(150)
+    button:SetHeight(30)
+    button:SetText(text)
+    return button
+end
+
+local bagOpen = SheetButton("TouchControlsBagSheetOpen", "Open")
+local bagRemove = SheetButton("TouchControlsBagSheetRemove", "Take off")
+local bagDone = SheetButton("TouchControlsBagSheetClose", CLOSE or "Close")
+
+-- Why a bag can't come off, or where it goes, beside Take off.
+local bagRemoveNote = bagSheet:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+bagRemoveNote:SetPoint("LEFT", bagRemove, "RIGHT", 10, 0)
+bagRemoveNote:SetJustifyH("LEFT")
+
+local bagChoicesTitle = bagSheet:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+bagChoicesTitle:SetJustifyH("LEFT")
+
+-- The bags in the player's bags, one button each, to put in this slot.
+local bagChoices = {}
+local BAG_CHOICE_COLUMNS, BAG_CHOICE_ROWS = 2, 3
+local BAG_CHOICE_WIDTH, BAG_CHOICE_HEIGHT = 230, 40
+
+local function BagChoice(index)
+    if bagChoices[index] then
+        return bagChoices[index]
     end
+
+    local choice = CreateFrame("Button", nil, bagSheet)
+    choice:SetWidth(BAG_CHOICE_WIDTH)
+    choice:SetHeight(BAG_CHOICE_HEIGHT)
+    choice:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 12, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+    choice:SetBackdropColor(0.15, 0.15, 0.15, 1)
+    choice:SetBackdropBorderColor(0.6, 0.55, 0.45)
+    choice:SetHighlightTexture("Interface\\Buttons\\UI-Listbox-Highlight2", "ADD")
+    choice.icon = choice:CreateTexture(nil, "ARTWORK")
+    choice.icon:SetWidth(30)
+    choice.icon:SetHeight(30)
+    choice.icon:SetPoint("LEFT", 5, 0)
+    choice.text = choice:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    choice.text:SetPoint("LEFT", choice.icon, "RIGHT", 8, 0)
+    choice.text:SetPoint("RIGHT", -6, 0)
+    choice.text:SetJustifyH("LEFT")
+    bagChoices[index] = choice
+    return choice
+end
+
+-- A general bag (not this one) with a free space, for a bag taken off: 0 is the backpack.
+local function FreeBagFor(bag)
+    for other = 0, NUM_BAG_SLOTS do
+        if other ~= bag then
+            local free, family = GetContainerNumFreeSlots(other)
+
+            if free and free > 0 and family == 0 then
+                return other
+            end
+        end
+    end
+end
+
+-- The bags in the player's bags that can go in a bag slot (bags and quivers).
+local function BagsInBags()
+    local found = {}
+
+    for bag = 0, NUM_BAG_SLOTS do
+        for slot = 1, GetContainerNumSlots(bag) do
+            local link = GetContainerItemLink(bag, slot)
+
+            if link then
+                local name, _, quality, _, _, _, _, _, equip, texture = GetItemInfo(link)
+
+                if equip == "INVTYPE_BAG" or equip == "INVTYPE_QUIVER" then
+                    tinsert(found, { bag = bag, slot = slot, name = name, quality = quality, texture = texture })
+                end
+            end
+        end
+    end
+
+    return found
+end
+
+local sheetBag             -- the bag (1 - 4) the sheet is for
+
+local function FillBagSheet()
+    local bag = sheetBag
+    local inventory = ContainerIDToInventoryID(bag)
+    local texture = GetInventoryItemTexture("player", inventory)
+    local link = GetInventoryItemLink("player", inventory)
+    local slots = GetContainerNumSlots(bag)
+    local free = GetContainerNumFreeSlots(bag)
+
+    bagSheetIcon:SetTexture(texture or "Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag")
+
+    if link then
+        local name, _, quality = GetItemInfo(link)
+        local color = ITEM_QUALITY_COLORS[quality or 1]
+        bagSheetTitle:SetText(name or BAG_NAMES[bag + 1])
+        bagSheetTitle:SetTextColor(color.r, color.g, color.b)
+        bagSheetInfo:SetText(format("%s: %d slots, %d free", BAG_NAMES[bag + 1], slots, free))
+    else
+        bagSheetTitle:SetText(BAG_NAMES[bag + 1] .. ": empty slot")
+        bagSheetTitle:SetTextColor(NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b)
+        bagSheetInfo:SetText("No bag here yet.")
+    end
+
+    -- Open and Take off only with a bag in the slot; it comes off only empty, into a free space in another bag.
+    if link then
+        bagOpen:Show()
+        bagRemove:Show()
+    else
+        bagOpen:Hide()
+        bagRemove:Hide()
+    end
+
+    bagRemoveNote:SetText("")
+
+    if link then
+        if free < slots then
+            bagRemove:Disable()
+            bagRemoveNote:SetText("Empty this bag first.")
+        elseif not FreeBagFor(bag) then
+            bagRemove:Disable()
+            bagRemoveNote:SetText("No free space in your other bags.")
+        else
+            bagRemove:Enable()
+        end
+    end
+
+    -- The bags that can go here: with one here already, a choice swaps them.
+    local choices = BagsInBags()
+    local top = link and -116 or -80
+    bagChoicesTitle:ClearAllPoints()
+    bagChoicesTitle:SetPoint("TOPLEFT", bagSheet, "TOPLEFT", 24, top)
+
+    if #choices == 0 then
+        bagChoicesTitle:SetText(link and "No other bags in your bags to swap in." or "No bags in your bags to put here.")
+    else
+        bagChoicesTitle:SetText(link and "Swap for one of your bags:" or "Put one of your bags here:")
+    end
+
+    local shown = min(#choices, BAG_CHOICE_COLUMNS * BAG_CHOICE_ROWS)
+
+    for index, choice in ipairs(bagChoices) do
+        choice:Hide()
+    end
+
+    for index = 1, shown do
+        local item = choices[index]
+        local choice = BagChoice(index)
+        local column, row = (index - 1) % BAG_CHOICE_COLUMNS, floor((index - 1) / BAG_CHOICE_COLUMNS)
+        local color = ITEM_QUALITY_COLORS[item.quality or 1]
+        choice.item = item
+        choice.icon:SetTexture(item.texture)
+        choice.text:SetText(item.name)
+        choice.text:SetTextColor(color.r, color.g, color.b)
+        choice:ClearAllPoints()
+        choice:SetPoint("TOPLEFT", bagSheet, "TOPLEFT", 24 + column * (BAG_CHOICE_WIDTH + 8), top - 22 - row * (BAG_CHOICE_HEIGHT + 6))
+        choice:Show()
+    end
+
+    local rows = ceil(shown / BAG_CHOICE_COLUMNS)
+    bagSheet:SetWidth(48 + BAG_CHOICE_COLUMNS * BAG_CHOICE_WIDTH + 8)
+    bagSheet:SetHeight(-top + 22 + rows * (BAG_CHOICE_HEIGHT + 6) + 64)
+end
+
+local function ShowBagSheet(bag)
+    sheetBag = bag
+    -- The sheet's buttons as big as the menu's own.
+    bagSheet:SetScale(ScreenHeight() * 0.065 / 30)
+    bagSheet:SetFrameLevel(menu:GetFrameLevel() + 20)
+    bagSheetShade:SetFrameLevel(menu:GetFrameLevel() + 19)
+    bagSheet:ClearAllPoints()
+    bagSheet:SetPoint("CENTER", menu, "CENTER", 0, 0)
+    FillBagSheet()
+    bagSheet:Show()
+end
+
+bagOpen:SetPoint("TOPLEFT", bagSheet, "TOPLEFT", 24, -72)
+bagRemove:SetPoint("LEFT", bagOpen, "RIGHT", 10, 0)
+bagRemoveNote:ClearAllPoints()
+bagRemoveNote:SetPoint("LEFT", bagRemove, "RIGHT", 10, 0)
+bagDone:SetPoint("BOTTOMRIGHT", bagSheet, "BOTTOMRIGHT", -22, 20)
+
+bagOpen:SetScript("OnClick", function()
+    local bag = sheetBag
+    menu:Hide()
+    ToggleBag(bag)
+end)
+
+bagRemove:SetScript("OnClick", function()
+    local into = FreeBagFor(sheetBag)
+
+    if into and not CursorHasItem() then
+        PickupBagFromSlot(ContainerIDToInventoryID(sheetBag))
+
+        if into == 0 then
+            PutItemInBackpack()
+        else
+            PutItemInBag(ContainerIDToInventoryID(into))
+        end
+    end
+
+    -- Whatever the game refused goes back where it was, not stuck on the finger.
+    if CursorHasItem() then
+        ClearCursor()
+    end
+end)
+
+bagDone:SetScript("OnClick", function() bagSheet:Hide() end)
+
+-- A bag chosen: it goes in this slot, and the one there (if any) takes its place in the bags.
+local function ChooseBag(choice)
+    local item = choice.item
+
+    if item and not CursorHasItem() then
+        PickupContainerItem(item.bag, item.slot)
+        PutItemInBag(ContainerIDToInventoryID(sheetBag))
+    end
+
+    if CursorHasItem() then
+        ClearCursor()
+    end
+end
+
+for index = 1, BAG_CHOICE_COLUMNS * BAG_CHOICE_ROWS do
+    BagChoice(index):SetScript("OnClick", ChooseBag)
+end
+
+-- The game moves bags a moment later: the sheet and the labels follow.
+local bagWatch = CreateFrame("Frame")
+bagWatch:RegisterEvent("BAG_UPDATE")
+bagWatch:RegisterEvent("UNIT_INVENTORY_CHANGED")
+bagWatch:RegisterEvent("ITEM_LOCK_CHANGED")
+
+function UpdateBagLabels()
+    for index, label in pairs(bagLabels) do
+        local bag = index - 1
+        local slots
+
+        if index == 1 then
+            slots = GetContainerNumSlots(0)
+        elseif index <= 5 then
+            slots = GetInventoryItemTexture("player", ContainerIDToInventoryID(bag)) and GetContainerNumSlots(bag)
+        end
+
+        if index == 6 then
+            -- The game shows the key ring only once there are keys.
+            label:SetText(KeyRingButton:IsShown() and BAG_NAMES[index] or "")
+        elseif slots then
+            label:SetText(format("%s\n|cffffffff%d slots|r", BAG_NAMES[index], slots))
+        else
+            label:SetText(format("%s\n|cff808080empty|r", BAG_NAMES[index]))
+        end
+    end
+end
+
+bagWatch:SetScript("OnEvent", function()
+    if menu:IsShown() then
+        UpdateBagLabels()
+
+        if bagSheet:IsShown() then
+            FillBagSheet()
+        end
+    end
+end)
+
+menu:HookScript("OnShow", UpdateBagLabels)
+
+for bag = 1, NUM_BAG_SLOTS do
+    local cover = CreateFrame("Button", nil, menu)
+    cover:SetScript("OnClick", function(self)
+        -- A bag on the finger already (picked up some other way) goes straight in, as with the game's own slot.
+        if CursorHasItem() then
+            PutItemInBag(ContainerIDToInventoryID(bag))
+        else
+            ShowBagSheet(bag)
+        end
+    end)
+    -- A hold shows the slot's tooltip, as the game's button would.
+    cover:SetScript("OnEnter", function(self)
+        local slot = _G["CharacterBag" .. (bag - 1) .. "Slot"]
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+
+        if not GameTooltip:SetInventoryItem("player", slot:GetID()) then
+            GameTooltip:SetText(EQUIP_CONTAINER, 1, 1, 1)
+        end
+    end)
+    cover:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    cover:Hide()
+    bagCovers[bag] = cover
+end
 end
 
 for _, button in ipairs(MicroButtonList()) do
@@ -1190,8 +1526,8 @@ local function FillMenu()
     microHolder:SetWidth(5 * cellWidth)
     microHolder:SetHeight(2 * cellHeight)
 
-    -- The bags in a row: the backpack 37 square, the bags 30, the key ring 18 wide.
-    local bagCell = 42
+    -- The bags in a row, each over its name and slots: the backpack 37 square, the bags 30, the key ring 18 wide.
+    local bagCell, bagLabelHeight = 56, 24
 
     for index, name in ipairs(bags) do
         local bag = _G[name]
@@ -1200,12 +1536,32 @@ local function FillMenu()
             Keep(name, bag)
             bag:SetParent(bagHolder)
             bag:ClearAllPoints()
-            bag:SetPoint("BOTTOM", bagHolder, "BOTTOMLEFT", (index - 0.5) * bagCell, 0)
+            bag:SetPoint("BOTTOM", bagHolder, "BOTTOMLEFT", (index - 0.5) * bagCell, bagLabelHeight + 2)
+
+            local label = bagLabels[index] or bagHolder:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            bagLabels[index] = label
+            label:SetFont(label:GetFont(), 9)
+            label:ClearAllPoints()
+            label:SetPoint("TOP", bagHolder, "BOTTOMLEFT", (index - 0.5) * bagCell, bagLabelHeight)
+
+            -- The four bag slots: a tap anywhere in the cell, name included, opens the sheet.
+            local cover = bagCovers[index - 1]
+
+            if cover then
+                cover:SetParent(bagHolder)
+                cover:SetFrameLevel(bag:GetFrameLevel() + 5)
+                cover:ClearAllPoints()
+                cover:SetPoint("BOTTOMLEFT", bagHolder, "BOTTOMLEFT", (index - 1) * bagCell, 0)
+                cover:SetWidth(bagCell)
+                cover:SetHeight(40 + bagLabelHeight)
+                cover:Show()
+            end
         end
     end
 
     bagHolder:SetWidth(#bags * bagCell)
-    bagHolder:SetHeight(40)
+    bagHolder:SetHeight(40 + bagLabelHeight)
+    UpdateBagLabels()
 
     -- The settings: sliders, each under its label, then two columns of check boxes.
     local sliderRow = 44
@@ -1321,31 +1677,21 @@ local function EmptyMenu()
     end
 
     wipe(bagPoints)
+    bagSheet:Hide()
+
+    for _, cover in pairs(bagCovers) do
+        cover:Hide()
+    end
+
     VehicleMenuBar_MoveMicroButtons()
 end
 
 -- Leaving a vehicle puts the micro buttons back on the main bar: they come back to the menu. Getting in puts them on
 -- the vehicle's bar, by the first of each line: the rest go back to their chain behind it.
+-- Getting in or out of a vehicle moves the micro buttons to its bar or the main bar: they come back to the menu.
 hooksecurefunc("VehicleMenuBar_MoveMicroButtons", function(skinName)
-    if not inMenu then
-        return
-    end
-
-    if not skinName then
+    if inMenu then
         FillMenu()
-        return
-    end
-
-    for _, button in ipairs(MicroButtonList()) do
-        local original = bagPoints[button:GetName()]
-
-        if original and button ~= CharacterMicroButton and button ~= SocialsMicroButton then
-            button:ClearAllPoints()
-
-            for _, point in ipairs(original.points) do
-                button:SetPoint(unpack(point))
-            end
-        end
     end
 end)
 
@@ -1381,24 +1727,81 @@ end
 -- screen's edge; the stance, pet and totem bars above them grow for fingers.
 local SMALL_BARS = { "ShapeshiftBarFrame", "PossessBarFrame", "PetActionBarFrame", "MultiCastActionBarFrame" }
 
+-- Where the touch layout keeps the main bar (Layout's numbers, for PlaceGameBars): its y, and the right edge the class
+-- bars above it must stop at (the targeting column's left).
+local mainBarY = -40
+local classBarsRight
+
 local function PlaceGameBars()
     if InCombatLockdown() then
         return
     end
 
     local wheel = db.style == "wheel"
+    local width, height = ScreenWidth(), ScreenHeight()
 
-    -- With the wheel, the main bar (its experience bar) spans the middle half of the screen, and the stance and pet
-    -- buttons (30 high) are a sixteenth of the screen's height.
-    local barScale = wheel and min(1, ScreenWidth() * 0.5 / MainMenuBar:GetWidth()) or 1
+    -- With the wheel, the main bar (its experience bar) spans the middle half of the screen, from the joystick's edge,
+    -- with its top a little above the screen's bottom (clear of the system's gesture bar), where the stance, pet and
+    -- totem bars start.
+    local barScale = wheel and min(1, width * 0.5 / MainMenuBar:GetWidth()) or 1
+    mainBarY = wheel and floor(height * 0.035 / barScale - 53) or 0
     MainMenuBar:SetScale(barScale)
     MainMenuBar:ClearAllPoints()
-    MainMenuBar:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, wheel and -40 or 0)
+    MainMenuBar:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, mainBarY)
+
+    -- The stance, pet and totem buttons (30 high) a finger's size, as long as their widest bar (the pet bar, 509 wide)
+    -- fits between the joystick and the targeting column.
+    local size = height * 0.07 / 30
+
+    if wheel and classBarsRight then
+        size = min(size, (classBarsRight - width * 0.25 - 40 * barScale) / 509)
+    end
 
     for _, name in ipairs(SMALL_BARS) do
         if _G[name] then
-            _G[name]:SetScale(wheel and ScreenHeight() * 0.06 / 30 / barScale or 1)
+            _G[name]:SetScale(wheel and size / barScale or 1)
         end
+    end
+
+    -- Getting out of a vehicle the main bar has: a finger's size too.
+    if MainMenuBarVehicleLeaveButton then
+        MainMenuBarVehicleLeaveButton:SetScale(wheel and height * 0.09 / 32 / barScale or 1)
+    end
+
+    -- A vehicle's own bar: as wide as half the screen at most, its action buttons see-through (the wheel casts them).
+    if VehicleMenuBar then
+        VehicleMenuBar:SetScale(wheel and min(1, width * 0.5 / 970) or 1)
+    end
+
+    if VehicleMenuBarActionButtonFrame then
+        VehicleMenuBarActionButtonFrame:SetAlpha(wheel and 0 or 1)
+    end
+end
+
+-- The pet bar goes above whichever class bar is showing (stances, totems, possession), in its own row: the game places
+-- it beside the stance bar by the stance bar's screen position, which with the main bar moved puts it under the wheel.
+-- Done when the game has placed it (its slide over), out of combat.
+local function PlacePetBar()
+    local bar = PetActionBarFrame
+
+    if db.style ~= "wheel" or InCombatLockdown() or not bar or not bar:IsShown() or (bar.slideTimer and bar.timeToSlide and bar.slideTimer < bar.timeToSlide) then
+        return
+    end
+
+    local below
+
+    for _, name in ipairs({ "MultiCastActionBarFrame", "PossessBarFrame", "ShapeshiftBarFrame" }) do
+        if _G[name] and _G[name]:IsShown() then
+            below = _G[name]
+            break
+        end
+    end
+
+    local _, relativeTo = bar:GetPoint(1)
+
+    if below and relativeTo ~= below then
+        bar:ClearAllPoints()
+        bar:SetPoint("BOTTOMLEFT", below, "TOPLEFT", 0, 4)
     end
 end
 
@@ -1413,6 +1816,12 @@ local function PlaceTracker()
     local right = -(MinimapCluster and MinimapCluster:GetWidth() or 192) - 12
     WatchFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", right, -ScreenHeight() * 0.15)
     WatchFrame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", right, ScreenHeight() * 0.68)
+
+    -- A vehicle's seats, left of the tracker rather than over the wheel.
+    if VehicleSeatIndicator then
+        VehicleSeatIndicator:ClearAllPoints()
+        VehicleSeatIndicator:SetPoint("TOPRIGHT", WatchFrame, "TOPLEFT", -8, 0)
+    end
 end
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -1484,11 +1893,15 @@ local function Layout()
 
     -- Interact and the two targetings in a row along the bottom, clear of the wheel's widest reach, interact nearest
     -- the thumb. In the bars style, a column left of jump.
-    for i, name in ipairs({ "interact", "targetEnemy", "targetFriend" }) do
+    -- A column clear of the wheel's reach, above the stance, pet and totem bars along the bottom.
+    local columnX = centerX - height * (reach + SMALL_SIZE * 0.5 + 0.05)
+    classBarsRight = columnX - height * SMALL_SIZE * 0.6
+
+    for i, name in ipairs({ "interact", "targetEnemy", "targetFriend", "leave" }) do
         SizeRound(buttons[name], height * SMALL_SIZE)
 
         if wheel then
-            PlaceAt(buttons[name], centerX - height * (reach + SMALL_SIZE * 0.5 + 0.04 + 0.1 * (i - 1)), height * 0.07)
+            PlaceAt(buttons[name], columnX, height * (0.2 + 0.1 * (i - 1)))
         else
             PlaceAt(buttons[name], centerX - height * 0.17, centerY - height * 0.05 + height * 0.11 * (i - 1))
         end
@@ -1599,7 +2012,9 @@ local function UpdatePage()
     local current = GetActionBarPage and GetActionBarPage() or 1
     local group = floor(wheelOffset / db.wheelCount) + 1
 
-    buttons.page.text:SetText(groups > 1 and format("%d%s", current, strsub("abc", group, group)) or current)
+    -- Pages numbered plainly, 1 on: with fewer buttons than keys a bar page is several of them, one after another.
+    -- Every tap goes to the next, none skipped, so the number always says where the wheel is.
+    buttons.page.text:SetText((OtherBar() and 0 or (current - 1) * groups) + group)
 
     -- On a vehicle's bar the page doesn't count: the page button only steps through its groups.
     if OtherBar() then
@@ -1608,18 +2023,8 @@ local function UpdatePage()
         return
     end
 
-    local here = (current - 1) * groups + group - 1
-    local targetPage, targetGroup = 1, 1
-
-    for step = 1, pages * groups do
-        local position = (here + step) % (pages * groups)
-        local page, candidate = floor(position / groups) + 1, position % groups + 1
-
-        if (page == 1 and candidate == 1) or GroupUsed(page, candidate) then
-            targetPage, targetGroup = page, candidate
-            break
-        end
-    end
+    local position = ((current - 1) * groups + group) % (pages * groups)
+    local targetPage, targetGroup = floor(position / groups) + 1, position % groups + 1
 
     if targetPage == current then
         nextGroup, pendingPage, pendingGroup = targetGroup, nil, nil
@@ -1687,7 +2092,8 @@ local function ApplyHidden()
 
     for name, button in pairs(buttons) do
         if name ~= "toggle" then
-            if not db.hidden and (name ~= "page" or wheel) then
+            -- The page button with the wheel only; leave in a vehicle only.
+            if not db.hidden and (name ~= "page" or wheel) and (name ~= "leave" or (CanExitVehicle and CanExitVehicle())) then
                 button:Show()
             else
                 button:Hide()
@@ -1766,6 +2172,7 @@ local function EnsureBindings()
     controls.bags.key = GetBindingKey("TOUCHCONTROLS_BAGS")
     controls.actions.key = GetBindingKey("TOUCHCONTROLS_RADIAL")
     controls.modifier.key = GetBindingKey("TOUCHCONTROLS_MODIFIER")
+    controls.leave.key = GetBindingKey("TOUCHCONTROLS_DISMOUNT")
 
     for _, entry in ipairs(radialEntries) do
         controls[entry.name].key = GetBindingKey(entry.action)
@@ -1862,7 +2269,18 @@ addon:SetScript("OnUpdate", function(self, elapsed)
 
         if otherBar ~= lastOtherBar then
             lastOtherBar = otherBar
-            UpdatePage()
+            ShowGroup(1)
+        end
+
+        -- The leave button while there's a vehicle to leave.
+        local canLeave = not db.hidden and CanExitVehicle and CanExitVehicle() and true or false
+
+        if canLeave ~= buttons.leave:IsShown() then
+            if canLeave then
+                buttons.leave:Show()
+            else
+                buttons.leave:Hide()
+            end
         end
     end
 
@@ -1893,9 +2311,11 @@ addon:SetScript("OnUpdate", function(self, elapsed)
 
         -- Out of a loading screen or a vehicle the main bar slides back to its own place; the touch one is restored once
         -- it has finished.
-        if db.style == "wheel" and not InCombatLockdown() and MainMenuBar:IsShown() and not MainMenuBar.busy and select(5, MainMenuBar:GetPoint(1)) ~= -40 then
+        if db.style == "wheel" and not InCombatLockdown() and MainMenuBar:IsShown() and not MainMenuBar.busy and floor(select(5, MainMenuBar:GetPoint(1)) + 0.5) ~= mainBarY then
             PlaceGameBars()
         end
+
+        PlacePetBar()
 
         if pendingRenderAt and GetTime() > pendingRenderAt and not InCombatLockdown() then
             SetRenderMode(pendingRenderMode)
@@ -2034,7 +2454,7 @@ local HELP = {
     } },
     { title = "Spells and the wheel", text = {
         "The buttons around jump are your action bar. |cffffd200Tap|r one to use it.",
-        "|cffffd200The number button|r in the corner turns to the next page of your bar that has something on it.",
+        "|cffffd200The number button|r in the corner turns to the next page of your bar: 1, 2, 3... and back to 1.",
         "|cffffd200Put a spell on a button|r: hold the button. The spellbook opens; tap the spell you want there.",
         "You can also drag a spell or item from the spellbook or your bags and drop it on a button.",
         "|cffffd200Lock buttons|r (in the menu) stops a long press from opening the spellbook.",
@@ -2069,8 +2489,7 @@ local HELP = {
         "|cffffd200Move a bag|r: drag it by its frame.",
         "|cffffd200Move an item|r: tap it to pick it up, tap where it should go. Or drag it there.",
         "|cffffd200Use or equip|r: hold the item, then lift.",
-        "|cffffd200Put a bag on|r: hold it in your bags, then lift. To swap one, pick it up, open the menu and tap a bag slot.",
-        "|cffffd200Take a bag off|r: drag its slot out of the menu, then tap an empty space in your bags (it has to be empty).",
+        "|cffffd200Bag slots|r: open the menu and tap one of Bag 1 to Bag 4. Its sheet has Open, Take off (the bag has to be empty), and your spare bags: tap one to put it in that slot, or to swap it for the one there.",
     } },
     { title = "Menus and settings", text = {
         "|cffffd200Menus|r (hold a portrait, a name in chat...) stay open until you pick something, tap Cancel, or go Back.",
@@ -2229,6 +2648,49 @@ end
 
 helpButton:SetScript("OnClick", TouchControls_ShowHelp)
 
+-- A vehicle's aim buttons work while pressed, and a finger's hold is a hover with no button down: holding one aims
+-- (the finger's arrival and departure are its enter and leave).
+for _, aim in ipairs({ { "VehicleMenuBarPitchUpButton", "VehicleAimUpStart", "VehicleAimUpStop" }, { "VehicleMenuBarPitchDownButton", "VehicleAimDownStart", "VehicleAimDownStop" } }) do
+    local button = _G[aim[1]]
+
+    if button then
+        button:HookScript("OnEnter", function()
+            _G[aim[2]]()
+        end)
+        button:HookScript("OnLeave", function()
+            _G[aim[3]]()
+        end)
+    end
+end
+
+-- A totem slot's arrow (choosing its totem) shows only while the mouse is over the slot, which a finger leaves at once:
+-- it stays, so a hold on the slot then a tap on the arrow opens the choice.
+if MultiCastFlyoutFrameOpenButton_Show then
+    local lastType, lastParent
+
+    hooksecurefunc("MultiCastFlyoutFrameOpenButton_Show", function(self, type, parent)
+        lastType, lastParent = type, parent
+    end)
+
+    hooksecurefunc("MultiCastFlyoutFrameOpenButton_Hide", function(self, force)
+        if not force and lastType and lastParent and lastParent:IsVisible() and not self:IsShown() then
+            MultiCastFlyoutFrameOpenButton_Show(self, lastType, lastParent)
+        end
+    end)
+end
+
+-- The game's own tooltip spot is the bottom right corner, under the wheel and the right thumb: tooltips that use it
+-- (units in the world, action buttons, the minimap...) go to the top middle instead, under the top row of buttons,
+-- where nothing covers them and no finger does.
+hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
+    if not db then
+        return
+    end
+
+    tooltip:ClearAllPoints()
+    tooltip:SetPoint("TOP", UIParent, "TOP", 0, -ScreenHeight() * (SMALL_SIZE * 1.5 + 0.02))
+end)
+
 -- A choice in a submenu hides only the submenu (the mouse leaving would close the rest, which it no longer does): the
 -- whole menu goes with it.
 hooksecurefunc("UIDropDownMenuButton_OnClick", function(self)
@@ -2367,7 +2829,10 @@ addon:SetScript("OnEvent", function(self, event, name)
         wheelOffset = (group - 1) * db.wheelCount
         SetWheelKeys()
         UpdatePage()
-    elseif event == "ACTIONBAR_SLOT_CHANGED" or event == "UPDATE_BONUS_ACTIONBAR" then
+    elseif event == "UPDATE_BONUS_ACTIONBAR" then
+        -- A form, stealth or possession: its bar from its first keys.
+        ShowGroup(1)
+    elseif event == "ACTIONBAR_SLOT_CHANGED" then
         UpdatePage()
     elseif event == "UPDATE_BINDINGS" then
         EnsureBindings()

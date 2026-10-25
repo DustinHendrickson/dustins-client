@@ -32,6 +32,10 @@ void AndroidInputSetPointQuery(int32_t (*query)());
 // scrolls it.
 void AndroidInputSetWheelQuery(bool (*query)());
 
+// Whether the text box with the keyboard focus has several lines (a macro, a letter): confirming Android's keyboard
+// dialog presses Enter for the box (sends the chat line, accepts a popup) unless it does.
+void AndroidInputSetMultiLineQuery(bool (*query)());
+
 // Whether a UI frame that takes the mouse is at a point (fractions of the screen from its bottom left), whatever the
 // mouse is doing: a second finger there taps it while the first turns the camera.
 void AndroidInputSetUiAtPointQuery(bool (*query)(float x, float y));

@@ -24,7 +24,11 @@
 		TouchControls_AssignStart()
 	</Binding>
 	<Binding name="TOUCHCONTROLS_DISMOUNT">
-		Dismount()
+		if ( CanExitVehicle() ) then
+			VehicleExit();
+		else
+			Dismount();
+		end
 	</Binding>
 	<Binding name="TOUCHCONTROLS_MODIFIER">
 		TouchControls_CycleModifier()
