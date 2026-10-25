@@ -68,7 +68,9 @@ enum AndroidInputControlFlag {
                                         // to turn the camera presses nothing (the game casts on the key's release anyway)
 };
 
-void AndroidInputSetKeyControl(const char* name, float left, float bottom, float right, float top, int32_t key, uint32_t modifiers, uint32_t flags);
+// holdKey: for an OnLift control, the key pressed instead when the finger stays on it without moving a moment
+// (KEY_NONE for none).
+void AndroidInputSetKeyControl(const char* name, float left, float bottom, float right, float top, int32_t key, uint32_t modifiers, uint32_t flags, int32_t holdKey, uint32_t holdModifiers);
 void AndroidInputSetJoystick(const char* name, float left, float bottom, float right, float top);
 void AndroidInputRemoveControl(const char* name);
 void AndroidInputClearControls();
@@ -79,6 +81,9 @@ bool AndroidInputGetJoystick(float* originX, float* originY, float* x, float* y)
 
 // Whether a finger is holding the key control of that name, for the add-on to draw it pressed.
 bool AndroidInputControlHeld(const char* name);
+
+// Whether a finger pressed the key control of that name since the last time this was asked of it.
+bool AndroidInputControlPressed(const char* name);
 
 // OsIMEEnable: a text box gained or lost the keyboard focus.
 void AndroidInputSetTextFocus(bool focus);

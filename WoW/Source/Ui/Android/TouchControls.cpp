@@ -1,7 +1,7 @@
 // The game's side of Android's touch controls (TouchControls.h): what the native input layer needs from the UI to
 // route fingers, and the Lua functions of the TouchControls add-on (Tools/Android/assets/AddOns/TouchControls):
 //
-//   TouchControls_SetControl(name, left, bottom, right, top, key[, flags])
+//   TouchControls_SetControl(name, left, bottom, right, top, key[, flags[, holdKey]])
 //                                   an overlay control: a finger landing in the area (fractions of the screen from its
 //                                   bottom left) holds key down, a binding's name for one ("SPACE", "TAB", "SHIFT-2",
 //                                   "F13"), or is the joystick when key is "JOYSTICK". Setting a name again replaces it.
@@ -11,6 +11,7 @@
 //                                   while a finger holds the joystick: where it landed and how far it is pushed (-1 to
 //                                   1, right and up positive)
 //   held = TouchControls_IsHeld(name)    whether a finger is on that key control
+//   pressed = TouchControls_WasPressed(name)   whether a finger pressed it since the last time this was asked
 //   dpi, left, bottom, right, top, widthInches, heightInches = TouchControls_GetScreen()
 //                                   the screen's density, the safe area's margins (the notch, the gesture bar) as
 //                                   fractions of the screen, and its physical size
@@ -20,6 +21,7 @@
 //   TouchControls_SetCamera(speed, invert)     the camera drag's speed (1 by default) and up / down swapped
 //   TouchControls_SetAutorunKey(key)           the key a double tap on the joystick presses (autorun's binding)
 //   TouchControls_Log(text)                    a line in Logs/Console.txt
+//   TouchControls_LogPlayer()                  the player's state that sitting and sheathing check, in the log
 
 #include "WoW/Source/Ui/Android/TouchControls.h"
 #include <cstdio>
@@ -32,6 +34,8 @@
 #include "Engine/Source/Os/Android/AndroidInput.h"
 #include "Engine/Source/Os/Android/AndroidSystem.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
+#include "WoW/Source/Object/ObjectClient/Player_C.h"
+#include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
 #include "WoW/Source/Ui/Mac/PortActions.h"
 #include "WoW/Source/Ui/WorldFrame.h"
 
@@ -140,13 +144,20 @@ int32_t KeyFromName(const char* name) {
         { "DOWN", KEY_DOWN }, { "LEFT", KEY_LEFT }, { "RIGHT", KEY_RIGHT }, { "NUMLOCK", KEY_NUMLOCK },
         { "-", KEY_MINUS }, { "=", KEY_PLUS }, { "`", KEY_TILDE }, { "[", KEY_BRACKET_OPEN },
         { "]", KEY_BRACKET_CLOSE }, { "/", KEY_SLASH }, { "\\", KEY_BACKSLASH }, { ";", KEY_SEMICOLON },
-        { "'", KEY_APOSTROPHE }, { ",", KEY_COMMA }, { ".", KEY_PERIOD },
+        { "'", KEY_APOSTROPHE }, { ",", KEY_COMMA }, { ".", KEY_PERIOD }, { "PRINTSCREEN", KEY_PRINTSCREEN },
+        { "PAUSE", KEY_PAUSE }, { "SCROLLLOCK", KEY_SCROLLLOCK }, { "CAPSLOCK", KEY_CAPSLOCK },
+        { "NUMPADPLUS", KEY_NUMPAD_PLUS }, { "NUMPADMINUS", KEY_NUMPAD_MINUS }, { "NUMPADMULTIPLY", KEY_NUMPAD_MULTIPLY },
+        { "NUMPADDIVIDE", KEY_NUMPAD_DIVIDE }, { "NUMPADDECIMAL", KEY_NUMPAD_DECIMAL }, { "NUMPADEQUALS", KEY_NUMPAD_EQUALS },
     };
 
     for (const auto& named : s_named) {
         if (!strcmp(named.name, name)) {
             return named.key;
         }
+    }
+
+    if (!strncmp(name, "NUMPAD", 6) && name[6] >= '0' && name[6] <= '9' && !name[7]) {
+        return KEY_NUMPAD0 + (name[6] - '0');
     }
 
     if (name[0] && !name[1]) {
@@ -233,11 +244,16 @@ int32_t Script_TouchControls_SetControl(lua_State* L) {
         flags |= AndroidInputControl_OnLift;
     }
 
+    // A key pressed instead when the finger stays still on the control a moment (the "lift" kind).
+    const char* hold = lua_tostring(L, 8);
+    uint32_t holdModifiers = 0;
+    int32_t holdCode = hold ? ParseKey(hold, &holdModifiers) : KEY_NONE;
+
     uint32_t modifiers;
     int32_t code = ParseKey(key, &modifiers);
 
     if (code != KEY_NONE) {
-        AndroidInputSetKeyControl(name, left, bottom, right, top, code, modifiers, flags);
+        AndroidInputSetKeyControl(name, left, bottom, right, top, code, modifiers, flags, holdCode, holdModifiers);
     } else {
         AndroidInputRemoveControl(name);
     }
@@ -280,6 +296,12 @@ int32_t Script_TouchControls_GetJoystick(lua_State* L) {
 int32_t Script_TouchControls_IsHeld(lua_State* L) {
     const char* name = lua_tostring(L, 1);
     lua_pushboolean(L, name && AndroidInputControlHeld(name));
+    return 1;
+}
+
+int32_t Script_TouchControls_WasPressed(lua_State* L) {
+    const char* name = lua_tostring(L, 1);
+    lua_pushboolean(L, name && AndroidInputControlPressed(name));
     return 1;
 }
 
@@ -333,6 +355,22 @@ int32_t Script_TouchControls_SetAutorunKey(lua_State* L) {
     return 0;
 }
 
+int32_t Script_TouchControls_LogPlayer(lua_State* L) {
+    CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
+
+    if (!player) {
+        fprintf(stderr, "TouchControls: no player\n");
+        return 0;
+    }
+
+    fprintf(stderr, "TouchControls: player stand %u (field %u) sheathe %u mount %d clientFlags 0x%x animState 0x%x cast %d channel %u attacking %d local %d unitFlags 0x%x moveFlags 0x%x\n",
+        player->GetClientStandState(), player->m_unit->m_unitFieldBytes1[0], player->m_sheatheState, player->m_mountDisplayId,
+        player->m_clientFlags, player->m_animationState, player->m_castSpellId, player->m_unit->m_unitChannelSpell,
+        player->m_combat.m_attacking ? 1 : 0, player->IsLocalClientControlled() ? 1 : 0, player->m_unit->m_unitFieldFlags,
+        player->m_movement->m_flags);
+    return 0;
+}
+
 int32_t Script_TouchControls_Log(lua_State* L) {
     if (const char* text = lua_tostring(L, 1)) {
         fprintf(stderr, "TouchControls: %s\n", text);
@@ -350,6 +388,7 @@ const struct {
     { "TouchControls_ClearControls", &Script_TouchControls_ClearControls },
     { "TouchControls_GetJoystick", &Script_TouchControls_GetJoystick },
     { "TouchControls_IsHeld", &Script_TouchControls_IsHeld },
+    { "TouchControls_WasPressed", &Script_TouchControls_WasPressed },
     { "TouchControls_GetScreen", &Script_TouchControls_GetScreen },
     { "TouchControls_Interact", &Script_TouchControls_Interact },
     { "TouchControls_TargetNonHostile", &Script_TouchControls_TargetNonHostile },
@@ -357,6 +396,7 @@ const struct {
     { "TouchControls_SetCamera", &Script_TouchControls_SetCamera },
     { "TouchControls_SetAutorunKey", &Script_TouchControls_SetAutorunKey },
     { "TouchControls_Log", &Script_TouchControls_Log },
+    { "TouchControls_LogPlayer", &Script_TouchControls_LogPlayer },
 };
 
 }

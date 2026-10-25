@@ -5,7 +5,7 @@
 -- and tells it where they are (TouchControls_SetControl): a finger landing on one presses its key, or is the joystick,
 -- whatever the UI or the world has under it. Spells are cast by their real key bindings (ACTIONBUTTON1 to 12), so they
 -- work in combat and follow the player's bindings; the add-on's own actions are bindings too (Bindings.xml), on keys a
--- phone doesn't type (F13 to F16).
+-- phone doesn't type (F14 to F19; F13 is Print Screen to the game, the same key code).
 --
 -- Two styles, switched in the menu or with /touch: the thumb wheel, whose buttons only show what keys 1 to = cast now
 -- (the main bar's page, a stance's bar, a vehicle's) while the game's own action bars are put away; and the default
@@ -17,6 +17,11 @@ BINDING_NAME_TOUCHCONTROLS_TARGETNONHOSTILE = "Target nearest friendly or neutra
 BINDING_NAME_TOUCHCONTROLS_TOGGLE = "Show or hide touch controls"
 BINDING_NAME_TOUCHCONTROLS_MENU = "Touch controls menu"
 BINDING_NAME_TOUCHCONTROLS_NEXTGROUP = "Touch controls: next buttons"
+BINDING_NAME_TOUCHCONTROLS_BAGS = "Touch controls: all bags"
+BINDING_NAME_TOUCHCONTROLS_RADIAL = "Touch controls: actions"
+BINDING_NAME_TOUCHCONTROLS_ASSIGN = "Touch controls: put a spell on the held button"
+BINDING_NAME_TOUCHCONTROLS_DISMOUNT = "Dismount"
+BINDING_NAME_TOUCHCONTROLS_FOLLOW = "Follow target"
 
 local defaults = {
     style = "wheel",    -- "wheel": the thumb wheel; "bars": the default action bars
@@ -24,10 +29,12 @@ local defaults = {
     textScale = 1.15,   -- the game's fonts, as a multiple of their own sizes
     displayChosen = false,  -- whether the interface size for this screen has been set (once, then it's the player's)
     autoLootChosen = false, -- whether auto loot has been turned on (once, likewise)
+    touchSettingsChosen = false,    -- whether the interface options suited to touch have been set (once, likewise)
     frameRate = 60,     -- 30 saves the battery
     cameraSpeed = 1,    -- the camera drag's turn per pixel
     cameraInvert = false,
     wheelCount = 12,    -- the wheel's buttons on screen (WHEEL_LAYOUTS)
+    lockButtons = false,    -- holding a wheel button doesn't open the spellbook
     graphicsChosen = false, -- whether the phone's graphics defaults have been set (once, then they're the player's)
     glowChosen = false, -- whether the full-screen glow has been turned off (once, likewise)
 }
@@ -40,6 +47,7 @@ local NUM_WHEEL = 12        -- the whole bar, keys 1 to =
 local CORNER = 0.16         -- the jump button's center, in from the bottom right corner
 local JUMP_SIZE = 0.14
 local SMALL_SIZE = 0.072    -- the other round buttons
+local PAGE_SIZE = 0.1       -- the page button, in the corner beside jump
 -- The wheel packs into the corner, so the screen's right side above it is the world's, for the right thumb to turn
 -- the camera on. How many buttons it shows is an option: fewer are bigger, with more room between them, and the rest
 -- of the bar is a press of the page button away. Each layout's button size and arcs (radius from jump's center, how
@@ -250,10 +258,14 @@ end
 
 -- Jump jumps the moment it's touched (a drag from it still turns the camera after); the rest press on lift.
 AddButton("jump", "Interface\\Icons\\Ability_Rogue_Sprint", "SPACE", "round")
-AddButton("interact", "Interface\\Icons\\INV_Gauntlets_04", "F13")
+AddButton("interact", "Interface\\Icons\\INV_Gauntlets_04", "F18")
 AddButton("targetEnemy", "Interface\\Icons\\Ability_Hunter_SniperShot", "TAB")
 AddButton("targetFriend", "Interface\\Icons\\Spell_Holy_HolyBolt", "F14")
 AddButton("chat", "Interface\\Icons\\INV_Letter_15", "ENTER")
+AddButton("character", nil, "C")
+AddButton("bags", "Interface\\Icons\\INV_Misc_Bag_08", "F19")
+AddButton("actions", "Interface\\Icons\\Ability_Rogue_Disguise", "CTRL-F16")
+controls.actions.holdAction = "TOUCHCONTROLS_RADIAL"
 AddButton("menu", "Interface\\Icons\\INV_Misc_Gear_01", "F16")
 AddButton("toggle", "Interface\\Icons\\Spell_Shadow_DetectInvisibility", "F15")
 AddButton("page", nil, nil)
@@ -295,6 +307,70 @@ for index = 1, NUM_WHEEL do
 
     slots[index] = slot
     Register("action" .. index, slot, nil, "round,lift")
+    controls["action" .. index].holdAction = "TOUCHCONTROLS_ASSIGN"
+    controls["action" .. index].wheel = true
+end
+
+------------------------------------------------------------------------------------------------------------------------
+-- The actions list: things a keyboard does with a hotkey, as big rows in a panel dropped down from the actions button. Each presses its
+-- action's binding (a key of the add-on's own where the player has none); a tap anywhere else closes it.
+
+local radialEntries = {
+    { name = "radialSit", action = "SITORSTAND", label = "Sit / stand", icon = "Interface\\Icons\\Spell_Nature_Sleep", spare = "ALT-F14" },
+    { name = "radialSheathe", action = "TOGGLESHEATH", label = "Sheathe", icon = "Interface\\Icons\\INV_Sword_04", spare = "ALT-F15" },
+    { name = "radialWalk", action = "TOGGLERUN", label = "Walk / run", icon = "Interface\\Icons\\Ability_Tracking", spare = "ALT-F16" },
+    { name = "radialMap", action = "TOGGLEWORLDMAP", label = "Map", icon = "Interface\\Icons\\INV_Misc_Map_01", spare = "ALT-F17" },
+    { name = "radialSelf", action = "TARGETSELF", label = "Target self", icon = "Interface\\Icons\\Spell_Holy_PowerWordShield", spare = "ALT-F18" },
+    { name = "radialFollow", action = "TOUCHCONTROLS_FOLLOW", label = "Follow", icon = "Interface\\Icons\\Ability_Rogue_Sprint", spare = "CTRL-F15" },
+    { name = "radialDismount", action = "TOUCHCONTROLS_DISMOUNT", label = "Dismount", icon = "Interface\\Icons\\Ability_Mount_RidingHorse", spare = "CTRL-F14" },
+    { name = "radialScreenshot", action = "SCREENSHOT", label = "Screenshot", icon = "Interface\\Icons\\INV_Misc_Spyglass_03", spare = "ALT-F19" },
+}
+
+-- Behind the ring, the whole screen: a tap on it closes the ring (and nothing reaches the world meanwhile).
+local radialCatcher = CreateFrame("Frame", "TouchControlsRadial", UIParent)
+radialCatcher:SetAllPoints(UIParent)
+radialCatcher:SetFrameStrata("DIALOG")
+radialCatcher:EnableMouse(true)
+radialCatcher:Hide()
+
+local radialShade = radialCatcher:CreateTexture(nil, "BACKGROUND")
+radialShade:SetAllPoints()
+radialShade:SetTexture(0, 0, 0, 0.25)
+
+-- The panel the rows sit in, dropped down from the actions button.
+local radialPanel = CreateFrame("Frame", nil, radialCatcher)
+radialPanel:SetBackdrop({
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+    tile = true, tileSize = 32, edgeSize = 24,
+    insets = { left = 8, right = 8, top = 8, bottom = 8 },
+})
+radialPanel:EnableMouse(true)
+
+
+-- Each action a row: its icon and its name, the whole row the button, lit while a finger is on it.
+for _, entry in ipairs(radialEntries) do
+    local row = CreateFrame("Frame", "TouchControls" .. entry.name, radialPanel)
+    row:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 12, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+    row:SetBackdropColor(0.12, 0.12, 0.12, 0.95)
+    row:SetBackdropBorderColor(0.6, 0.55, 0.45)
+
+    row.icon = MakeRound(nil, row)
+    SetRoundIcon(row.icon, entry.icon)
+    row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    row.label:SetPoint("LEFT", row.icon, "RIGHT", 8, 0)
+    row.label:SetText(entry.label)
+
+    row.pressed = row:CreateTexture(nil, "HIGHLIGHT")
+    row.pressed:SetTexture(1, 0.82, 0.3, 0.25)
+    row.pressed:SetPoint("TOPLEFT", 3, -3)
+    row.pressed:SetPoint("BOTTOMRIGHT", -3, 3)
+    row.pressed:SetDrawLayer("OVERLAY")
+    row.pressed:Hide()
+
+    entry.button = row
+    Register(entry.name, row, nil, "lift")
+    controls[entry.name].radial = true
 end
 
 -- The button keys index would press now: a vehicle's, a stance's or possession's bar, or the main bar.
@@ -432,19 +508,33 @@ local function Covered(left, bottom, right, top)
     return false
 end
 
+local radialOpen = false     -- the actions ring is showing (it pauses the other controls)
+
 -- Sends every visible, uncovered control's area to the input layer, and drops the others.
 local function SyncControls()
     GatherOpen()
+
+    local cursorFull = GetCursorInfo() and true or false
+
+    for _, slot in ipairs(slots) do
+        slot:EnableMouse(cursorFull)
+    end
 
     for name, control in pairs(controls) do
         local frame = control.frame
         local sent = false
 
-        if (not db.hidden or name == "toggle") and frame:IsVisible() and control.key then
+        -- With the actions ring open only its buttons count; with a spell or item on the cursor the wheel's buttons
+        -- are left to the UI, to take it (a tap or a drop on one puts it there).
+        local paused = (radialOpen and not control.radial) or (control.wheel and GetCursorInfo())
+
+        if (not db.hidden or name == "toggle") and frame:IsVisible() and control.key and not paused then
             local left, bottom, right, top = Fractions(frame)
 
-            if left and not Covered(left, bottom, right, top) then
-                TouchControls_SetControl(name, left, bottom, right, top, control.key, control.flags)
+            if left and (control.radial or not Covered(left, bottom, right, top)) then
+                -- Holding a wheel button opens the spellbook to put a spell on it, unless the buttons are locked.
+                local hold = control.holdAction and not (control.wheel and db.lockButtons) and GetBindingKey(control.holdAction) or nil
+                TouchControls_SetControl(name, left, bottom, right, top, control.key, control.flags, hold)
                 sent = true
             end
         end
@@ -453,6 +543,187 @@ local function SyncControls()
             TouchControls_RemoveControl(name)
         end
     end
+end
+
+------------------------------------------------------------------------------------------------------------------------
+-- The actions ring, opened by the actions button (a tap or a hold).
+
+local function LayoutRadial()
+    local height = ScreenHeight()
+    local rowHeight = height * 0.115
+    local rowWidth = height * 0.46
+    local gap = height * 0.018
+    local padding = height * 0.03
+
+    -- The rows of the actions there are keys for, two columns.
+    local shown = {}
+
+    for _, entry in ipairs(radialEntries) do
+        if controls[entry.name].key then
+            tinsert(shown, entry)
+            entry.button:Show()
+        else
+            entry.button:Hide()
+        end
+    end
+
+    local rows = ceil(#shown / 2)
+    radialPanel:SetWidth(rowWidth * 2 + gap + padding * 2)
+    radialPanel:SetHeight(rows * rowHeight + (rows - 1) * gap + padding * 2)
+    radialPanel:ClearAllPoints()
+    radialPanel:SetPoint("TOP", buttons.actions, "BOTTOM", 0, -gap)
+    radialPanel:SetClampedToScreen(true)
+
+    for index, entry in ipairs(shown) do
+        local column, line = (index - 1) % 2, floor((index - 1) / 2)
+        local row = entry.button
+        row:SetWidth(rowWidth)
+        row:SetHeight(rowHeight)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", radialPanel, "TOPLEFT", padding + column * (rowWidth + gap), -padding - line * (rowHeight + gap))
+        SizeRound(row.icon, rowHeight * 0.78)
+        row.icon:ClearAllPoints()
+        row.icon:SetPoint("LEFT", row, "LEFT", rowHeight * 0.12, 0)
+    end
+end
+
+local function CloseRadial()
+    radialOpen = false
+    radialCatcher:Hide()
+    SyncControls()
+end
+
+function TouchControls_ToggleRadial()
+    if radialOpen then
+        CloseRadial()
+        return
+    end
+
+    radialOpen = true
+    LayoutRadial()
+    radialCatcher:Show()
+    SyncControls()
+end
+
+radialCatcher:SetScript("OnMouseUp", CloseRadial)
+
+------------------------------------------------------------------------------------------------------------------------
+-- Putting spells on the wheel. Holding a wheel button opens the spellbook for it: a tap on a spell puts the spell on
+-- that button. And with a spell or item on the cursor (dragged from the spellbook or the bags) the wheel's buttons take
+-- a drop or a tap (SyncControls leaves them to the UI then).
+
+local assignAction          -- the action slot the spellbook is choosing for
+local lastHeldSlot          -- the wheel button a finger was last on (the one the hold was on)
+local assignBanner, assignOverlays
+
+local function EndAssign()
+    assignAction = nil
+
+    if assignBanner then
+        assignBanner:Hide()
+
+        for _, overlay in ipairs(assignOverlays) do
+            overlay:Hide()
+        end
+    end
+end
+
+local function WheelAction(index)
+    local button = WheelButton(wheelOffset + index)
+    return button and button.action
+end
+
+local function SetupAssign()
+    if assignBanner or not SpellBookFrame then
+        return
+    end
+
+    assignBanner = CreateFrame("Frame", nil, SpellBookFrame)
+    assignBanner:SetFrameLevel(SpellBookFrame:GetFrameLevel() + 20)
+    assignBanner:SetPoint("BOTTOMLEFT", SpellBookFrame, "TOPLEFT", 20, -12)
+    assignBanner:SetPoint("BOTTOMRIGHT", SpellBookFrame, "TOPRIGHT", -40, -12)
+    assignBanner:SetHeight(30)
+    assignBanner:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 12, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+    assignBanner:SetBackdropColor(0, 0, 0, 0.9)
+    assignBanner.text = assignBanner:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    assignBanner.text:SetPoint("CENTER")
+
+    -- Over each spell, a button that takes the tap instead of casting it.
+    assignOverlays = {}
+
+    for index = 1, SPELLS_PER_PAGE or 12 do
+        local spellButton = _G["SpellButton" .. index]
+
+        if spellButton then
+            -- The spell's icon and its name beside it, for a finger.
+            local overlay = CreateFrame("Button", nil, spellButton)
+            overlay:SetPoint("TOPLEFT", spellButton, "TOPLEFT", -4, 4)
+            overlay:SetPoint("BOTTOMRIGHT", spellButton, "BOTTOMRIGHT", spellButton:GetWidth() * 3.4, -4)
+            overlay:SetFrameLevel(spellButton:GetFrameLevel() + 10)
+            overlay:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+            overlay:EnableMouse(true)
+            overlay:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+            overlay:SetScript("OnClick", function()
+                local id = SpellBook_GetSpellID(spellButton:GetID())
+                local book = SpellBookFrame.bookType
+
+                if not assignAction or not id or id > (MAX_SPELLS or 1024) or IsPassiveSpell(id, book) then
+                    return
+                end
+
+                PickupSpell(id, book)
+                PlaceAction(assignAction)
+                ClearCursor()
+                EndAssign()
+                HideUIPanel(SpellBookFrame)
+            end)
+            overlay:Hide()
+            assignOverlays[index] = overlay
+        end
+    end
+
+    SpellBookFrame:HookScript("OnHide", EndAssign)
+
+end
+
+function TouchControls_AssignStart()
+    if not lastHeldSlot then
+        return
+    end
+
+    SetupAssign()
+    assignAction = WheelAction(lastHeldSlot)
+
+    if not assignAction or not assignBanner then
+        return
+    end
+
+    if not SpellBookFrame:IsShown() then
+        ToggleSpellBook(BOOKTYPE_SPELL)
+    end
+
+    assignBanner.text:SetText(format("Tap a spell to put it on button %d", lastHeldSlot))
+    assignBanner:Show()
+
+    for _, overlay in ipairs(assignOverlays) do
+        overlay:Show()
+    end
+end
+
+-- A spell or item on the cursor goes on the wheel button it's dropped or tapped on. The buttons take the mouse only then
+-- (SyncControls): otherwise a drag off one turns the camera, which a frame under the mouse would stop.
+for index, slot in ipairs(slots) do
+
+    local function Place()
+        local action = WheelAction(index)
+
+        if action and GetCursorInfo() then
+            PlaceAction(action)
+        end
+    end
+
+    slot:SetScript("OnMouseUp", Place)
+    slot:SetScript("OnReceiveDrag", Place)
 end
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -471,6 +742,12 @@ menu:SetBackdrop({
 menu:Hide()
 tinsert(UISpecialFrames, "TouchControlsMenu")
 
+-- The dialog's own background is see-through; at most of the screen the world and the controls behind would show.
+local menuFill = menu:CreateTexture(nil, "BACKGROUND")
+menuFill:SetTexture(0.04, 0.04, 0.04, 0.94)
+menuFill:SetPoint("TOPLEFT", 11, -12)
+menuFill:SetPoint("BOTTOMRIGHT", -12, 11)
+
 local menuHeader = menu:CreateTexture(nil, "ARTWORK")
 menuHeader:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Header")
 menuHeader:SetWidth(300)
@@ -479,7 +756,7 @@ menuHeader:SetPoint("TOP", 0, 12)
 
 local menuTitle = menu:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 menuTitle:SetPoint("TOP", menuHeader, "TOP", 0, -14)
-menuTitle:SetText(MAINMENU_BUTTON or "Menu")
+menuTitle:SetText("Touch Controls")
 
 -- The micro buttons and bags, each row in a holder of its own scale, and the display settings in a third; all keep
 -- their size on the screen whatever the interface size.
@@ -487,17 +764,52 @@ local function MenuScale()
     return 1.6 * ScreenHeight() / 937
 end
 
+-- Two framed panels in the style of the game's option windows: the game's menu and the bags, and the settings.
+local function MakePanel(title)
+    local panel = CreateFrame("Frame", nil, menu)
+    panel:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    panel:SetBackdropColor(0.1, 0.1, 0.1, 0.9)
+    panel:SetBackdropBorderColor(0.6, 0.55, 0.45)
+    panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    panel.title:SetText(title)
+    return panel
+end
+
+local gamePanel = MakePanel(MAINMENU_BUTTON or "Menu")
+local settingsPanel = MakePanel(SETTINGS or "Settings")
+
+local bagsTitle = gamePanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+bagsTitle:SetText(BAGSLOTTEXT or "Bags")
+
+-- How to put bags on and take them off with a finger (FillMenu's hooks below).
+local bagsHint = gamePanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+bagsHint:SetJustifyH("LEFT")
+bagsHint:SetText("Hold a bag in your bags to put it on. Drag one out of here to take it off, or tap here holding one to swap.")
+
 local microHolder = CreateFrame("Frame", nil, menu)
 local bagHolder = CreateFrame("Frame", nil, menu)
 local displayHolder = CreateFrame("Frame", nil, menu)
 
-local styleButton = CreateFrame("Button", "TouchControlsMenuStyle", menu, "UIPanelButtonTemplate")
-local closeButton = CreateFrame("Button", "TouchControlsMenuClose", menu, "UIPanelButtonTemplate")
+-- A name under each of the game's menu buttons, in the menu's order (MicroButtonList).
+local MICRO_LABELS = { "Character", "Spells", "Talents", "Achievements", "Quests", "Social", "PvP", "Dungeons", "Game menu", "Help" }
+local microLabels = {}
 
-for _, button in ipairs({ styleButton, closeButton }) do
-    button:SetWidth(140)
+local styleButton = CreateFrame("Button", "TouchControlsMenuStyle", menu, "UIPanelButtonTemplate")
+local defaultsButton = CreateFrame("Button", "TouchControlsMenuDefaults", menu, "UIPanelButtonTemplate")
+local closeButton = CreateFrame("Button", "TouchControlsMenuClose", menu, "UIPanelButtonTemplate")
+local menuButtons = { styleButton, defaultsButton, closeButton }
+
+for _, button in ipairs(menuButtons) do
+    button:SetWidth(112)
     button:SetHeight(26)
 end
+
+defaultsButton:SetText(DEFAULTS or "Defaults")
 
 ------------------------------------------------------------------------------------------------------------------------
 -- Display: the interface's size, its text's, and the chat's.
@@ -707,6 +1019,13 @@ invertCheck:SetScript("OnClick", function(self)
     TouchControls_SetCamera(db.cameraSpeed, db.cameraInvert)
 end)
 
+-- Lock buttons: holding a wheel button doesn't open the spellbook (SyncControls sends no hold key).
+local lockCheck = CreateFrame("CheckButton", "TouchControlsMenuLock", displayHolder, "UICheckButtonTemplate")
+TouchControlsMenuLockText:SetText("Lock buttons")
+lockCheck:SetScript("OnClick", function(self)
+    db.lockButtons = self:GetChecked() and true or false
+end)
+
 local function UpdateSliders()
     updatingSliders = true
     uiScaleSlider:SetValue(tonumber(GetCVar("uiScale")) or 1)
@@ -721,6 +1040,7 @@ local function UpdateSliders()
 
     batteryCheck:SetChecked(db.frameRate == 30)
     invertCheck:SetChecked(db.cameraInvert)
+    lockCheck:SetChecked(db.lockButtons)
     glowCheck:SetChecked(GetCVar("ffxGlow") == "1")
     cameraSlider:SetValue(db.cameraSpeed)
 
@@ -767,6 +1087,15 @@ end
 for _, name in ipairs(bags) do
     if _G[name] then
         _G[name]:HookScript("OnClick", CloseMenu)
+
+        -- A bag dragged out of its slot: the menu gets out of the way and the bags open, for a tap on an empty space to
+        -- put it in (the game takes empty bags off only).
+        _G[name]:HookScript("OnDragStart", function()
+            if CursorHasItem() then
+                menu:Hide()
+                OpenAllBags(true)
+            end
+        end)
     end
 end
 
@@ -777,48 +1106,61 @@ end
 -- Moves the micro buttons and bags into the menu, a row each, and sizes the menu around them.
 local function FillMenu()
     local micro = MicroButtonList()
+    local width = ScreenWidth()
+    local height = ScreenHeight()
 
-    for _, button in ipairs(micro) do
-        button:SetParent(microHolder)
-    end
+    -- Where they were, to put them back (EmptyMenu).
+    local function Keep(name, frame)
+        if not bagPoints[name] then
+            local points = {}
 
-    -- One row: the chain runs from the character button (a vehicle starts a second line at the social button).
-    CharacterMicroButton:ClearAllPoints()
-    CharacterMicroButton:SetPoint("BOTTOMLEFT", microHolder, "BOTTOMLEFT", 0, 0)
-    SocialsMicroButton:ClearAllPoints()
-    SocialsMicroButton:SetPoint("BOTTOMLEFT", QuestLogMicroButton, "BOTTOMRIGHT", -3, 0)
-
-    for _, name in ipairs(bags) do
-        local bag = _G[name]
-
-        if bag then
-            if not bagPoints[name] then
-                local points = {}
-
-                for i = 1, bag:GetNumPoints() do
-                    points[i] = { bag:GetPoint(i) }
-                end
-
-                bagPoints[name] = { parent = bag:GetParent(), points = points }
+            for i = 1, frame:GetNumPoints() do
+                points[i] = { frame:GetPoint(i) }
             end
 
-            bag:SetParent(bagHolder)
+            bagPoints[name] = { parent = frame:GetParent(), points = points }
         end
     end
 
-    MainMenuBarBackpackButton:ClearAllPoints()
-    MainMenuBarBackpackButton:SetPoint("BOTTOMRIGHT", bagHolder, "BOTTOMRIGHT", 0, 0)
+    -- The menu buttons in a grid of five by two, each over its name: their art is 28 x 58 with the button in its lower 36.
+    local cellWidth, cellHeight, labelHeight = 40, 50, 9
 
-    -- The micro buttons' art is 28 x 58 with the button in its lower 36 (each overlaps the next by 3); the backpack is
-    -- 37 square, the other bags 30 with gaps, the key ring 18.
-    local microWidth = #micro * 25 + 3
-    local bagWidth = 37 + 4 * 32 + 22
-    microHolder:SetWidth(microWidth)
-    microHolder:SetHeight(40)
-    bagHolder:SetWidth(bagWidth)
-    bagHolder:SetHeight(37)
+    for index, button in ipairs(micro) do
+        local column, row = (index - 1) % 5, floor((index - 1) / 5)
+        Keep(button:GetName(), button)
+        button:SetParent(microHolder)
+        button:ClearAllPoints()
+        button:SetPoint("BOTTOM", microHolder, "TOPLEFT", (column + 0.5) * cellWidth, -(row + 1) * cellHeight + labelHeight)
 
-    -- The display settings: three sliders, each under its label.
+        local label = microLabels[index] or microHolder:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        microLabels[index] = label
+        label:SetFont(label:GetFont(), 5.5)
+        label:SetText(MICRO_LABELS[index] or "")
+        label:ClearAllPoints()
+        label:SetPoint("TOP", microHolder, "TOPLEFT", (column + 0.5) * cellWidth, -(row + 1) * cellHeight + labelHeight - 1)
+    end
+
+    microHolder:SetWidth(5 * cellWidth)
+    microHolder:SetHeight(2 * cellHeight)
+
+    -- The bags in a row: the backpack 37 square, the bags 30, the key ring 18 wide.
+    local bagCell = 42
+
+    for index, name in ipairs(bags) do
+        local bag = _G[name]
+
+        if bag then
+            Keep(name, bag)
+            bag:SetParent(bagHolder)
+            bag:ClearAllPoints()
+            bag:SetPoint("BOTTOM", bagHolder, "BOTTOMLEFT", (index - 0.5) * bagCell, 0)
+        end
+    end
+
+    bagHolder:SetWidth(#bags * bagCell)
+    bagHolder:SetHeight(40)
+
+    -- The settings: sliders, each under its label, then two columns of check boxes.
     local sliderRow = 44
     displayHolder:SetWidth(300)
     displayHolder:SetHeight(sliderRow * #displaySliders + 60)
@@ -828,7 +1170,6 @@ local function FillMenu()
         slider:SetPoint("TOP", displayHolder, "TOP", 0, -sliderRow * (index - 1) - 20)
     end
 
-    -- Two columns of check boxes under the sliders: the battery and the glow, the camera's invert.
     local checksTop = -sliderRow * #displaySliders - 4
     batteryCheck:ClearAllPoints()
     batteryCheck:SetPoint("TOPLEFT", displayHolder, "TOPLEFT", 0, checksTop)
@@ -836,33 +1177,77 @@ local function FillMenu()
     glowCheck:SetPoint("TOPLEFT", displayHolder, "TOPLEFT", 0, checksTop - 28)
     invertCheck:ClearAllPoints()
     invertCheck:SetPoint("TOPLEFT", displayHolder, "TOP", 10, checksTop)
+    lockCheck:ClearAllPoints()
+    lockCheck:SetPoint("TOPLEFT", displayHolder, "TOP", 10, checksTop - 28)
 
-    local scale = MenuScale()
-    local displayScale = scale * 0.8
-    local buttonScale = scale * 0.8
-    microHolder:SetScale(scale)
-    bagHolder:SetScale(scale)
-    displayHolder:SetScale(displayScale)
-    styleButton:SetScale(buttonScale)
-    closeButton:SetScale(buttonScale)
+    -- Most of the screen, below the top row of buttons: two panels side by side, the buttons along the bottom.
+    local menuWidth, menuHeight = width * 0.86, height * 0.84
+    local margin = height * 0.035      -- the dialog's border to the panels, and between them
+    local inset = height * 0.025       -- a panel's edge to what's in it
+    local titleHeight = height * 0.055 -- a panel's title
+    local buttonScale = height * 0.065 / 26
+    local buttonsHeight = 26 * buttonScale + margin
+    local panelWidth = (menuWidth - margin * 3) / 2
+    local panelHeight = menuHeight - margin * 2 - buttonsHeight
+    local inner = panelWidth - inset * 2
 
-    local padding = 30
-    local gap = 18
-    menu:SetWidth(max(microWidth * scale, bagWidth * scale, 300 * displayScale) + padding * 2)
-    menu:SetHeight(padding + 40 * scale + gap + 37 * scale + gap + displayHolder:GetHeight() * displayScale + gap + 26 * buttonScale + padding)
+    menu:SetWidth(menuWidth)
+    menu:SetHeight(menuHeight)
     menu:ClearAllPoints()
-    menu:SetPoint("CENTER", UIParent, "CENTER", 0, ScreenHeight() * 0.03)
+    menu:SetPoint("CENTER", UIParent, "CENTER", 0, -height * 0.04)
 
+    for i, panel in ipairs({ gamePanel, settingsPanel }) do
+        panel:SetWidth(panelWidth)
+        panel:SetHeight(panelHeight)
+        panel:ClearAllPoints()
+        panel:SetPoint("TOPLEFT", menu, "TOPLEFT", margin + (i - 1) * (panelWidth + margin), -margin)
+        panel:SetFrameLevel(menu:GetFrameLevel() + 1)
+        panel.title:ClearAllPoints()
+        panel.title:SetPoint("TOPLEFT", panel, "TOPLEFT", inset, -inset)
+    end
+
+    for _, holder in ipairs({ microHolder, bagHolder, displayHolder }) do
+        holder:SetFrameLevel(menu:GetFrameLevel() + 3)
+    end
+
+    -- The game panel: the menu grid, then the bags under their title, then the hint.
+    local gridHeight = panelHeight * 0.5
+    local bagsHeight = panelHeight * 0.17
+    local microScale = min(inner / microHolder:GetWidth(), gridHeight / microHolder:GetHeight())
+    local bagScale = min(inner / bagHolder:GetWidth(), bagsHeight / bagHolder:GetHeight())
+    microHolder:SetScale(microScale)
+    bagHolder:SetScale(bagScale)
+
+    local y = inset + titleHeight
     microHolder:ClearAllPoints()
-    microHolder:SetPoint("TOP", menu, "TOP", 0, -padding / scale)
+    microHolder:SetPoint("TOP", gamePanel, "TOP", 0, -y / microScale)
+    y = y + microHolder:GetHeight() * microScale + inset
+    bagsTitle:ClearAllPoints()
+    bagsTitle:SetPoint("TOPLEFT", gamePanel, "TOPLEFT", inset, -y)
+    y = y + titleHeight
     bagHolder:ClearAllPoints()
-    bagHolder:SetPoint("TOP", microHolder, "BOTTOM", 0, -gap / scale)
+    bagHolder:SetPoint("TOP", gamePanel, "TOP", 0, -y / bagScale)
+    y = y + bagHolder:GetHeight() * bagScale + inset * 0.6
+    bagsHint:ClearAllPoints()
+    bagsHint:SetPoint("TOPLEFT", gamePanel, "TOPLEFT", inset, -y)
+    bagsHint:SetWidth(inner)
+
+    -- The settings panel: the settings as big as fit under its title.
+    local displayScale = min(inner / displayHolder:GetWidth(), (panelHeight - titleHeight - inset * 2) / displayHolder:GetHeight())
+    displayHolder:SetScale(displayScale)
     displayHolder:ClearAllPoints()
-    displayHolder:SetPoint("TOP", menu, "TOP", 0, -(padding + 40 * scale + gap + 37 * scale + gap) / displayScale)
+    displayHolder:SetPoint("TOP", settingsPanel, "TOP", 0, -(inset + titleHeight) / displayScale)
+
+    for _, button in ipairs(menuButtons) do
+        button:SetScale(buttonScale)
+    end
+
     styleButton:ClearAllPoints()
-    styleButton:SetPoint("BOTTOMLEFT", menu, "BOTTOMLEFT", padding / buttonScale, padding / buttonScale)
+    styleButton:SetPoint("BOTTOMLEFT", menu, "BOTTOMLEFT", margin / buttonScale, margin / buttonScale)
     closeButton:ClearAllPoints()
-    closeButton:SetPoint("BOTTOMRIGHT", menu, "BOTTOMRIGHT", -padding / buttonScale, padding / buttonScale)
+    closeButton:SetPoint("BOTTOMRIGHT", menu, "BOTTOMRIGHT", -margin / buttonScale, margin / buttonScale)
+    defaultsButton:ClearAllPoints()
+    defaultsButton:SetPoint("BOTTOM", menu, "BOTTOM", 0, margin / buttonScale)
 
     inMenu = true
 end
@@ -889,10 +1274,28 @@ local function EmptyMenu()
     VehicleMenuBar_MoveMicroButtons()
 end
 
--- Leaving a vehicle puts the micro buttons back on the main bar: they come back to the menu.
+-- Leaving a vehicle puts the micro buttons back on the main bar: they come back to the menu. Getting in puts them on
+-- the vehicle's bar, by the first of each line: the rest go back to their chain behind it.
 hooksecurefunc("VehicleMenuBar_MoveMicroButtons", function(skinName)
-    if not skinName and inMenu then
+    if not inMenu then
+        return
+    end
+
+    if not skinName then
         FillMenu()
+        return
+    end
+
+    for _, button in ipairs(MicroButtonList()) do
+        local original = bagPoints[button:GetName()]
+
+        if original and button ~= CharacterMicroButton and button ~= SocialsMicroButton then
+            button:ClearAllPoints()
+
+            for _, point in ipairs(original.points) do
+                button:SetPoint(unpack(point))
+            end
+        end
     end
 end)
 
@@ -1003,8 +1406,8 @@ local function Layout()
     PlaceAt(buttons.jump, centerX, centerY)
 
     -- The page button in the corner itself, below and right of jump.
-    SizeRound(buttons.page, height * SMALL_SIZE)
-    PlaceAt(buttons.page, centerX + height * 0.1, centerY - height * 0.1)
+    SizeRound(buttons.page, height * PAGE_SIZE)
+    PlaceAt(buttons.page, width - height * 0.065, height * 0.065)
 
     -- The wheel's arcs in the chosen size, the first keys on the inner one; the buttons past it hidden.
     local layout = WHEEL_LAYOUTS[db.wheelCount] or WHEEL_LAYOUTS[12]
@@ -1041,10 +1444,13 @@ local function Layout()
         end
     end
 
-    -- Chat, the menu and the show / hide toggle at the top, between the unit frames and the minimap.
-    for i, name in ipairs({ "chat", "menu", "toggle" }) do
+    -- Chat, the character panel, the bags, the menu and the show / hide toggle at the top, between the unit frames and
+    -- the minimap.
+    local topRow = { "chat", "character", "bags", "actions", "menu", "toggle" }
+
+    for i, name in ipairs(topRow) do
         SizeRound(buttons[name], height * SMALL_SIZE)
-        PlaceAt(buttons[name], width * 0.5 + (i - 2) * height * SMALL_SIZE * 1.35, height * (1 - SMALL_SIZE * 0.7))
+        PlaceAt(buttons[name], width * 0.5 + (i - (#topRow + 1) / 2) * height * SMALL_SIZE * 1.35, height * (1 - SMALL_SIZE * 0.7))
     end
 
     -- The joystick's area: the bottom left, clear of the main bar (its experience bar, and the stance and pet bars
@@ -1279,7 +1685,21 @@ local function EnsureBindings()
     if (set == 1 or set == 2) and not InCombatLockdown() then
         ensuringBindings = true
 
-        for key, action in pairs({ F13 = "TOUCHCONTROLS_INTERACT", F14 = "TOUCHCONTROLS_TARGETNONHOSTILE", F15 = "TOUCHCONTROLS_TOGGLE", F16 = "TOUCHCONTROLS_MENU", F17 = "TOUCHCONTROLS_NEXTGROUP" }) do
+        -- F13 is Print Screen to the game (the same key code): interact's binding there from before moves.
+        if GetBindingAction("F13") == "TOUCHCONTROLS_INTERACT" then
+            SetBinding("F13")
+        end
+
+        -- The ring's actions the player has no key for get a key of the add-on's own.
+        for _, entry in ipairs(radialEntries) do
+            if not GetBindingKey(entry.action) and (GetBindingAction(entry.spare) or "") == "" then
+                SetBinding(entry.spare, entry.action)
+            end
+        end
+
+        for key, action in pairs({ F18 = "TOUCHCONTROLS_INTERACT", F14 = "TOUCHCONTROLS_TARGETNONHOSTILE", F15 = "TOUCHCONTROLS_TOGGLE", F16 = "TOUCHCONTROLS_MENU", F17 = "TOUCHCONTROLS_NEXTGROUP", F19 = "TOUCHCONTROLS_BAGS",
+            ["CTRL-F14"] = "TOUCHCONTROLS_DISMOUNT", ["CTRL-F15"] = "TOUCHCONTROLS_FOLLOW", ["CTRL-F16"] = "TOUCHCONTROLS_RADIAL",
+            ["CTRL-F17"] = "TOUCHCONTROLS_ASSIGN" }) do
             if not GetBindingKey(action) and (GetBindingAction(key) or "") == "" then
                 SetBinding(key, action)
             end
@@ -1293,6 +1713,13 @@ local function EnsureBindings()
     controls.targetFriend.key = GetBindingKey("TOUCHCONTROLS_TARGETNONHOSTILE")
     controls.toggle.key = GetBindingKey("TOUCHCONTROLS_TOGGLE")
     controls.menu.key = GetBindingKey("TOUCHCONTROLS_MENU")
+    controls.bags.key = GetBindingKey("TOUCHCONTROLS_BAGS")
+    controls.actions.key = GetBindingKey("TOUCHCONTROLS_RADIAL")
+
+    for _, entry in ipairs(radialEntries) do
+        controls[entry.name].key = GetBindingKey(entry.action)
+    end
+    controls.character.key = GetBindingKey("TOGGLECHARACTER0")
     controls.targetEnemy.key = GetBindingKey("TARGETNEARESTENEMY") or "TAB"
     controls.jump.key = GetBindingKey("JUMP") or "SPACE"
 
@@ -1343,9 +1770,26 @@ addon:SetScript("OnUpdate", function(self, elapsed)
         if pressed then
             if TouchControls_IsHeld(name) then
                 pressed:Show()
+
+                if control.wheel then
+                    lastHeldSlot = tonumber(strsub(name, 7))
+                end
             else
                 pressed:Hide()
             end
+        end
+    end
+
+    -- A ring button pressed and let go (however quickly): its action is done, and the ring closes.
+    if radialOpen then
+        local done = false
+
+        for _, entry in ipairs(radialEntries) do
+            done = TouchControls_WasPressed(entry.name) or done
+        end
+
+        if done then
+            CloseRadial()
         end
     end
 
@@ -1412,6 +1856,103 @@ addon:SetScript("OnUpdate", function(self, elapsed)
     end
 end)
 
+------------------------------------------------------------------------------------------------------------------------
+-- Bags a finger can drag by their frame: each bag goes back where it was put whenever the game lays the open ones out.
+
+local bagPlaces = {}        -- bag id -> left, top where it was put
+
+local function PlaceMovedBags()
+    for index = 1, NUM_CONTAINER_FRAMES or 13 do
+        local frame = _G["ContainerFrame" .. index]
+        local place = frame and frame:IsShown() and bagPlaces[frame:GetID()]
+
+        if place then
+            frame:ClearAllPoints()
+            frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", place[1], place[2])
+        end
+    end
+end
+
+for index = 1, NUM_CONTAINER_FRAMES or 13 do
+    local frame = _G["ContainerFrame" .. index]
+
+    if frame then
+        frame:SetMovable(true)
+        frame:SetClampedToScreen(true)
+        frame:RegisterForDrag("LeftButton")
+        frame:SetScript("OnDragStart", function(self)
+            self:StartMoving()
+        end)
+        frame:SetScript("OnDragStop", function(self)
+            self:StopMovingOrSizing()
+            bagPlaces[self:GetID()] = { self:GetLeft(), self:GetTop() }
+        end)
+    end
+end
+
+hooksecurefunc("updateContainerFrameAnchors", PlaceMovedBags)
+
+------------------------------------------------------------------------------------------------------------------------
+-- Defaults: every touch and display option back as a new install has them, after a yes.
+
+-- Interface options for a finger, which has no Shift and no hover: item tooltips always compare with what's equipped,
+-- talents are planned before they're learned (a tap only previews), and every buff shows as its own icon.
+local function TouchSettings()
+    SetCVar("alwaysCompareItems", "1")
+    SetCVar("previewTalents", "1")
+    SetCVar("consolidateBuffs", "0")
+end
+
+local function ResetDefaults()
+    for key, value in pairs(defaults) do
+        db[key] = value
+    end
+
+    -- The one-time settings are made again now, not at the next login.
+    db.displayChosen, db.autoLootChosen, db.graphicsChosen, db.glowChosen, db.touchSettingsChosen = true, true, true, true, true
+    TouchSettings()
+    wheelOffset = 0
+    wipe(bagPlaces)
+
+    SetUiScale(RecommendedScale())
+    ApplyTextScale(db.textScale)
+    SetChatSize(16)
+    SetCVar("ffxGlow", "0")
+    TouchControls_SetFrameRate(db.frameRate)
+    TouchControls_SetCamera(db.cameraSpeed, db.cameraInvert)
+
+    for _, mode in ipairs(renderModes) do
+        if mode.height <= 1080 then
+            pendingRenderMode, pendingRenderAt = mode, GetTime() + 0.5
+            break
+        end
+    end
+
+    Refresh()
+    refreshAt = GetTime() + 0.3
+    UpdateSliders()
+end
+
+StaticPopupDialogs["TOUCHCONTROLS_DEFAULTS"] = {
+    text = "Put every touch and display option back to its default?",
+    button1 = YES or "Yes",
+    button2 = NO or "No",
+    OnAccept = ResetDefaults,
+    timeout = 0,
+    whileDead = 1,
+    hideOnEscape = 1,
+}
+
+defaultsButton:SetScript("OnClick", function()
+    StaticPopup_Show("TOUCHCONTROLS_DEFAULTS")
+end)
+
+-- The character button shows the player's face.
+local function UpdatePortrait()
+    SetPortraitTexture(buttons.character.icon, "player")
+    buttons.character.icon:Show()
+end
+
 -- UIParent hides for the full-screen world map, cinematics and Alt-Z, and this frame with it: its controls go too, so
 -- taps reach what is showing, and come back with it.
 addon:SetScript("OnHide", function()
@@ -1435,6 +1976,7 @@ addon:RegisterEvent("UI_SCALE_CHANGED")
 addon:RegisterEvent("DISPLAY_SIZE_CHANGED")
 addon:RegisterEvent("UPDATE_CHAT_WINDOWS")
 addon:RegisterEvent("UNIT_EXITED_VEHICLE")
+addon:RegisterEvent("UNIT_PORTRAIT_UPDATE")
 
 addon:SetScript("OnEvent", function(self, event, name)
     if event == "ADDON_LOADED" then
@@ -1507,11 +2049,24 @@ addon:SetScript("OnEvent", function(self, event, name)
         SetCVar("ffxGlow", "0")
     end
 
+    if event == "PLAYER_ENTERING_WORLD" and not db.touchSettingsChosen then
+        db.touchSettingsChosen = true
+        TouchSettings()
+    end
+
     if event == "PLAYER_ENTERING_WORLD" and not db.displayChosen then
         db.displayChosen = true
         SetUiScale(RecommendedScale())
         SetChatSize(16)
         refreshAt = GetTime() + 0.3
+    end
+
+    if event == "PLAYER_ENTERING_WORLD" or (event == "UNIT_PORTRAIT_UPDATE" and name == "player") then
+        UpdatePortrait()
+
+        if event == "UNIT_PORTRAIT_UPDATE" then
+            return
+        end
     end
 
     if event == "UPDATE_CHAT_WINDOWS" then

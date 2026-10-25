@@ -163,6 +163,46 @@ face buttons are action keys), with Android's button names in the hints. Touch a
 5. Frame rate cap and pacing, background audio, low memory; controllers.
 6. On the phone: frame times (`debug.wow.gl`), texture memory, battery; tuning.
 
+## Touch audit of the default interface
+
+What a touch-only player can't do, or does awkwardly, in the 3.3.5 interface (the FrameXML and Blizzard add-ons read
+for modifier clicks, hover-only information, right-click menus, drags and binding-only actions). Most severe first;
+checked items are done.
+
+Blocks normal play:
+- [x] Reading a tooltip needs a still finger, and a still finger right-clicks at 500 ms: that uses or sells a bag
+      item, buys from a merchant, cancels a buff, casts from the spellbook, uses an equipped item. Fix in Input.cpp:
+      on the UI a hold is a hover (the tooltip stays while the finger does) and right-clicks on lift, cancelled if the
+      finger slides off first; the world keeps hold = right-click.
+- [ ] Gem socketing (Shift + right-click), splitting stacks and buying in bulk (Shift + click): an on-screen modifier
+      latch (Shift; a long press for Ctrl or Alt) held for the next UI finger.
+- [ ] Dropdown submenus (difficulty, loot rules, raid markers) close on tap, and menus opened at the finger close
+      themselves 2 s after it lifts: hook UIDropDownMenu_StartCounting so menus stay until a choice or Back.
+
+Awkward:
+- [ ] Linking items, spells and quests to chat (Shift + click): the modifier latch; and the keyboard path must keep
+      |H…|h links when it re-types the box.
+- [x] Item comparison needs Shift: default alwaysCompareItems on.
+- [x] A tap on a talent learns it: default previewTalents on.
+- [x] Consolidated buffs exist only while hovered: default consolidateBuffs off.
+- [ ] The stack split window takes digits from the keyboard only: open the number keyboard for it, or add buttons.
+- [ ] Multi-line text boxes (macros, mail) get a one-line Android dialog: a multi-line EditText for them.
+- [ ] Binding-only actions not yet in the actions list: assist, focus, reply, stop attack, raid markers, nameplates.
+- [ ] Press-and-hold buttons pulse once (vehicle aim, model rotate, scroll arrows): touch keys for vehicle aim.
+- [ ] The wheel takes spellbook spells by a hold, and anything on the cursor by a drop or tap; no way to clear or
+      move a wheel slot yet.
+- [ ] Item flyouts on the character panel (Alt): the modifier latch.
+
+Rare: the Key Bindings window (needs real key presses), no hover in the world (unit names, @mouseover; holding on the
+minimap pings), the dressing room (Ctrl + click), other Shift-only actions (glyph removal, raid pull-outs, take all
+mail, untracking), chat tab drags fighting the chat's place, the minimap's tiny zoom buttons.
+
+Works by touch: unit frames (tap targets, hold opens the menu), chat (scrolling, whispers by name, item links that open
+a closable tooltip), drag and drop between bags, bank, mail, trade, auction and the character panel, the spellbook to
+the default bars, hold as right-click where it's wanted (using items, moving them to an open bank or trade), text boxes
+in popups, the world map (tap zooms in, hold zooms out), scrolling lists by drag, loot rolls, the dungeon finder,
+vehicles' leave button, ground-targeted spells.
+
 ## Milestones
 
 1. **Tooling**: JDK, Android SDK command-line tools, NDK, build tools, the emulator and an arm64 system image.
@@ -241,6 +281,16 @@ face buttons are action keys), with Android's button names in the hints. Touch a
     a device restart, applied when the finger lifts); the first time, the render resolution goes to at most 1080 high
     and weather and particle density down a step. Each frame's work is reported to Android's performance hints
     (ADPF, Android 13 on) against the frame rate's time; on low memory the textures kept for reuse are let go.
+  - The top row: chat, the character panel (the player's portrait, through TOGGLECHARACTER0's key), all bags
+    (OpenAllBags), the menu and the show / hide toggle. Open bags can be dragged by their frames, and each goes back
+    where it was put whenever the game lays them out. The menu has a Defaults button (after a yes).
+  - Holding a wheel button still a moment opens the spellbook (the control's hold key, TOGGLESPELLBOOK's binding),
+    to drag a spell out and tap the wheel button to put it there; "Lock buttons" in the menu turns that off.
+  - The menu takes most of the screen, on a solid background: two framed panels, the game's menu buttons in a grid
+    with their names and the bag slots on the left, the settings on the right. Bags go on with a hold (a right-click)
+    in the bags; a bag slot dragged out of the menu closes it and opens the bags to drop it in.
+  - The add-on's own keys are F14 to F19: F13 is Print Screen to the game (the same key code), so interact moved off
+    it, and a binding left on it is cleared.
   - Interact and the targetings sit in a row along the bottom, left of the wheel; the quest tracker is a short block
     beside the minimap; the chat is kept above the joystick (put back if the game restores a dragged position).
   - The right thumb's cluster turns the camera too: a finger dragged off any button (past a wider slop than a tap's)

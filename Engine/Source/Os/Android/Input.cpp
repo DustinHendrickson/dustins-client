@@ -160,6 +160,7 @@ struct Finger {
     uint64_t downMs = 0;
     bool dragging = false;
     bool scrolling = false;     // Finger_Ui: dragging over a list, which scrolls it (the mouse wheel)
+    bool hovering = false;      // Finger_Ui: held still, so the mouse hovers (tooltips) and right-clicks on the lift
     int32_t scrollY = 0;        // where the last wheel notch was sent from
     bool lifted = false;        // lifted while Deciding or Waiting: its tap happens once decided
     uint32_t decidePoll = 0;    // the poll after which its role can be decided
@@ -167,6 +168,8 @@ struct Finger {
     uint32_t modifiers = 0;
     std::string control;
     bool onLift = false;        // Finger_Key: its key goes down and up when it lifts, not while it's down
+    int32_t holdKey = KEY_NONE; // Finger_Key: the key a still hold presses instead
+    uint32_t holdModifiers = 0;
 };
 
 // Overlay controls, set by the TouchControls add-on (AndroidInputSetKeyControl, AndroidInputSetJoystick).
@@ -180,9 +183,14 @@ struct Control {
     int32_t key;
     uint32_t modifiers;
     uint32_t flags;     // AndroidInputControlFlag
+    int32_t holdKey;    // pressed instead of key when the finger stays still a moment (OnLift controls)
+    uint32_t holdModifiers;
 };
 
 std::vector<Control> s_controls;
+// Key controls whose key a finger has pressed since the add-on last asked (AndroidInputControlPressed): a tap can be
+// down and up between two of its frames.
+std::vector<std::string> s_pressedControls;
 
 // The joystick: the finger on it, and the movement keys it holds.
 int32_t s_joystickFinger = -1;
@@ -614,6 +622,8 @@ void FingerDown(int32_t id, const C2iVector& point, uint64_t now) {
             finger->modifiers = control->modifiers;
             finger->control = control->name;
             finger->onLift = (control->flags & AndroidInputControl_OnLift) != 0;
+            finger->holdKey = finger->onLift ? control->holdKey : KEY_NONE;
+            finger->holdModifiers = control->holdModifiers;
 
             if (!finger->onLift) {
                 PutControlKey(finger->key, finger->modifiers, true);
@@ -698,6 +708,12 @@ void FingerMove(Finger& finger, const C2iVector& point) {
 
     switch (finger.role) {
         case Finger_Ui:
+            // Hovering, the mouse follows the finger with no button, so its tooltip follows too (reading along a bag).
+            if (finger.hovering) {
+                MoveMouseTo(point);
+                break;
+            }
+
             // Up or down over something that takes the mouse wheel (a list, the chat) scrolls it; any other drag holds
             // the button down and moves the mouse, for sliders, item dragging and moving windows.
             if (!finger.dragging && !finger.scrolling && BeyondSlop(finger)) {
@@ -805,6 +821,15 @@ void FingerUp(Finger& finger, bool cancel) {
                 break;
             }
 
+            // A hold read the tooltip: lifted where it began, the right-click it stood for; slid away first, nothing.
+            if (finger.hovering) {
+                if (!cancel && !BeyondButtonSlop(finger)) {
+                    ClickAt(finger.start, MOUSE_BUTTON_RIGHT);
+                }
+
+                break;
+            }
+
             if (finger.dragging) {
                 PutMouseButton(MOUSE_BUTTON_LEFT, false);
             } else if (!cancel) {
@@ -830,6 +855,15 @@ void FingerUp(Finger& finger, bool cancel) {
             } else if (!cancel) {
                 PutControlKey(finger.key, finger.modifiers, true);
                 PutControlKey(finger.key, finger.modifiers, false);
+            }
+
+            if (!cancel && !finger.control.empty()) {
+                // Only some controls are asked about: the oldest go once there are more than a few.
+                if (s_pressedControls.size() >= 16) {
+                    s_pressedControls.erase(s_pressedControls.begin());
+                }
+
+                s_pressedControls.push_back(finger.control);
             }
 
             break;
@@ -993,9 +1027,23 @@ void PollTouch(uint64_t now) {
             }
         }
 
-        bool still = finger.role == Finger_Ui ? !finger.dragging && !finger.scrolling : finger.role == Finger_World;
+        // A still hold on a control with a hold key: that key instead of the control's (the spellbook from a wheel
+        // button); the lift then presses nothing.
+        if (finger.role == Finger_Key && finger.holdKey != KEY_NONE && !BeyondButtonSlop(finger) && now - finger.downMs >= kTouchHoldMs) {
+            Trace("finger %d held on %s: hold key", finger.id, finger.control.c_str());
+            PutControlKey(finger.holdKey, finger.holdModifiers, true);
+            PutControlKey(finger.holdKey, finger.holdModifiers, false);
+            finger.role = Finger_Done;
+            finger.control.clear();
+            continue;
+        }
 
-        if (still && now - finger.downMs >= kTouchHoldMs) {
+        // Held still on the UI: a hover, for its tooltip; the right-click waits for the lift (FingerUp), so reading an
+        // item doesn't use, sell or buy it. On the world, a hold right-clicks at once (talk, loot, attack).
+        if (finger.role == Finger_Ui && !finger.dragging && !finger.scrolling && !finger.hovering && now - finger.downMs >= kTouchHoldMs) {
+            Trace("finger %d hovering", finger.id);
+            finger.hovering = true;
+        } else if (finger.role == Finger_World && now - finger.downMs >= kTouchHoldMs) {
             ClickAt(finger.start, MOUSE_BUTTON_RIGHT);
             finger.role = Finger_Done;
         }
@@ -1467,8 +1515,8 @@ void AndroidInputSetRenderSize(int32_t width, int32_t height) {
 
 namespace {
 
-void SetControl(const char* name, float left, float bottom, float right, float top, bool joystick, int32_t key, uint32_t modifiers, uint32_t flags) {
-    Control control = { name ? name : "", left, bottom, right, top, joystick, key, modifiers, flags };
+void SetControl(const char* name, float left, float bottom, float right, float top, bool joystick, int32_t key, uint32_t modifiers, uint32_t flags, int32_t holdKey, uint32_t holdModifiers) {
+    Control control = { name ? name : "", left, bottom, right, top, joystick, key, modifiers, flags, holdKey, holdModifiers };
 
     for (Control& existing : s_controls) {
         if (existing.name == control.name) {
@@ -1503,12 +1551,12 @@ void UpdateGestureExclusion() {
 
 }
 
-void AndroidInputSetKeyControl(const char* name, float left, float bottom, float right, float top, int32_t key, uint32_t modifiers, uint32_t flags) {
-    SetControl(name, left, bottom, right, top, false, key, modifiers, flags);
+void AndroidInputSetKeyControl(const char* name, float left, float bottom, float right, float top, int32_t key, uint32_t modifiers, uint32_t flags, int32_t holdKey, uint32_t holdModifiers) {
+    SetControl(name, left, bottom, right, top, false, key, modifiers, flags, holdKey, holdModifiers);
 }
 
 void AndroidInputSetJoystick(const char* name, float left, float bottom, float right, float top) {
-    SetControl(name, left, bottom, right, top, true, KEY_NONE, 0, 0);
+    SetControl(name, left, bottom, right, top, true, KEY_NONE, 0, 0, KEY_NONE, 0);
     UpdateGestureExclusion();
 }
 
@@ -1543,6 +1591,17 @@ bool AndroidInputGetJoystick(float* originX, float* originY, float* x, float* y)
     *originY = 1.0f - static_cast<float>(finger.start.y) / static_cast<float>(s_contentHeight);
     JoystickPush(finger, x, y);
     return true;
+}
+
+bool AndroidInputControlPressed(const char* name) {
+    for (auto pressed = s_pressedControls.begin(); pressed != s_pressedControls.end(); ++pressed) {
+        if (*pressed == name) {
+            s_pressedControls.erase(pressed);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool AndroidInputControlHeld(const char* name) {

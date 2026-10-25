@@ -14,4 +14,19 @@
 	<Binding name="TOUCHCONTROLS_NEXTGROUP">
 		TouchControls_NextGroup()
 	</Binding>
+	<Binding name="TOUCHCONTROLS_BAGS">
+		OpenAllBags()
+	</Binding>
+	<Binding name="TOUCHCONTROLS_RADIAL">
+		TouchControls_ToggleRadial()
+	</Binding>
+	<Binding name="TOUCHCONTROLS_ASSIGN">
+		TouchControls_AssignStart()
+	</Binding>
+	<Binding name="TOUCHCONTROLS_DISMOUNT">
+		Dismount()
+	</Binding>
+	<Binding name="TOUCHCONTROLS_FOLLOW">
+		FollowUnit("target")
+	</Binding>
 </Bindings>
