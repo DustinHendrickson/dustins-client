@@ -31,6 +31,7 @@ local defaults = {
     displayChosen = false,  -- whether the interface size for this screen has been set (once, then it's the player's)
     autoLootChosen = false, -- whether auto loot has been turned on (once, likewise)
     touchSettingsChosen = false,    -- whether the interface options suited to touch have been set (once, likewise)
+    helpShown = false,  -- whether the touch guide has opened by itself (once, at the first time in the world)
     frameRate = 60,     -- 30 saves the battery
     cameraSpeed = 1,    -- the camera drag's turn per pixel
     cameraInvert = false,
@@ -497,7 +498,7 @@ end
 ------------------------------------------------------------------------------------------------------------------------
 -- Controls under the game's windows: a bag, a dialog or the map over a control takes the fingers there instead.
 
-local covering = { "GameMenuFrame", "TouchControlsMenu", "LootFrame", "WorldMapFrame", "InterfaceOptionsFrame",
+local covering = { "GameMenuFrame", "TouchControlsMenu", "TouchControlsHelp", "LootFrame", "WorldMapFrame", "InterfaceOptionsFrame",
     "VideoOptionsFrame", "AudioOptionsFrame", "KeyBindingFrame", "MacroFrame", "MacroPopupFrame", "ChatConfigFrame",
     "HelpFrame", "StaticPopup1", "StaticPopup2", "StaticPopup3", "StaticPopup4", "ItemRefTooltip", "TradeFrame",
     "MerchantFrame", "GossipFrame", "QuestFrame", "TaxiFrame", "BankFrame", "MailFrame", "OpenMailFrame",
@@ -844,9 +845,10 @@ local MICRO_LABELS = { "Character", "Spells", "Talents", "Achievements", "Quests
 local microLabels = {}
 
 local styleButton = CreateFrame("Button", "TouchControlsMenuStyle", menu, "UIPanelButtonTemplate")
+local helpButton = CreateFrame("Button", "TouchControlsMenuHelp", menu, "UIPanelButtonTemplate")
 local defaultsButton = CreateFrame("Button", "TouchControlsMenuDefaults", menu, "UIPanelButtonTemplate")
 local closeButton = CreateFrame("Button", "TouchControlsMenuClose", menu, "UIPanelButtonTemplate")
-local menuButtons = { styleButton, defaultsButton, closeButton }
+local menuButtons = { styleButton, helpButton, defaultsButton, closeButton }
 
 for _, button in ipairs(menuButtons) do
     button:SetWidth(112)
@@ -854,6 +856,7 @@ for _, button in ipairs(menuButtons) do
 end
 
 defaultsButton:SetText(DEFAULTS or "Defaults")
+helpButton:SetText("How to play")
 
 ------------------------------------------------------------------------------------------------------------------------
 -- Display: the interface's size, its text's, and the chat's.
@@ -1290,8 +1293,11 @@ local function FillMenu()
     styleButton:SetPoint("BOTTOMLEFT", menu, "BOTTOMLEFT", margin / buttonScale, margin / buttonScale)
     closeButton:ClearAllPoints()
     closeButton:SetPoint("BOTTOMRIGHT", menu, "BOTTOMRIGHT", -margin / buttonScale, margin / buttonScale)
+    -- How to play and Defaults between the two, a third of the way in from each side.
+    helpButton:ClearAllPoints()
+    helpButton:SetPoint("BOTTOM", menu, "BOTTOMLEFT", menuWidth * 0.37 / buttonScale, margin / buttonScale)
     defaultsButton:ClearAllPoints()
-    defaultsButton:SetPoint("BOTTOM", menu, "BOTTOM", 0, margin / buttonScale)
+    defaultsButton:SetPoint("BOTTOM", menu, "BOTTOMLEFT", menuWidth * 0.63 / buttonScale, margin / buttonScale)
 
     inMenu = true
 end
@@ -2013,6 +2019,216 @@ hooksecurefunc("UIDropDownMenu_StartCounting", function(frame)
     end
 end)
 
+------------------------------------------------------------------------------------------------------------------------
+-- How to play: a guide to the touch controls, a section at a time, picked from a list on the left. It opens by itself
+-- the first time in the world; the menu's How to play button and /touch help bring it back.
+
+local HELP = {
+    { title = "Moving and the camera", text = {
+        "|cffffd200Move|r: put your left thumb anywhere in the lower left and push. The further you push, the faster you go.",
+        "|cffffd200Autorun|r: double-tap the joystick. Move again, or double-tap, to stop.",
+        "|cffffd200Look around|r: drag anywhere on the world with your right thumb. Your character turns with the camera.",
+        "|cffffd200Zoom|r: pinch with two fingers on the world.",
+        "|cffffd200Select|r: tap a creature or player. |cffffd200Talk, loot or attack|r: hold your finger on it.",
+        "|cffffd200Jump|r: the big button in the bottom right corner.",
+    } },
+    { title = "Spells and the wheel", text = {
+        "The buttons around jump are your action bar. |cffffd200Tap|r one to use it.",
+        "|cffffd200The number button|r in the corner turns to the next page of your bar that has something on it.",
+        "|cffffd200Put a spell on a button|r: hold the button. The spellbook opens; tap the spell you want there.",
+        "You can also drag a spell or item from the spellbook or your bags and drop it on a button.",
+        "|cffffd200Lock buttons|r (in the menu) stops a long press from opening the spellbook.",
+        "|cffffd200Buttons on screen|r (in the menu): show 12, 8, 6 or 4. Fewer are bigger; the number button steps through the rest.",
+        "Interact (gauntlet) loots, talks to or uses the nearest thing. The two target buttons pick the nearest enemy, or friend.",
+    } },
+    { title = "The top bar", text = {
+        "|cffffd200Letter|r: chat. |cffffd200Portrait|r: your character. |cffffd200Bag|r: all your bags.",
+        "|cffffd200Mask|r: actions that are only keys on a keyboard (sit, sheathe, walk, map, assist, focus, reply, marks...).",
+        "|cffffd200Key|r: Shift, Ctrl or Alt for your next tap (see Shift, Ctrl and Alt).",
+        "|cffffd200Gear|r: the menu. Every game window, your bag slots and the settings.",
+        "|cffffd200Eye|r: hide the touch controls, for screenshots and cutscenes. Tap it again to bring them back.",
+        "|cffffd200Back|r (swipe in from the screen's edge) closes windows and opens the game menu, like Escape.",
+    } },
+    { title = "Reading and right-clicking", text = {
+        "|cffffd200Read|r an item, spell or buff: hold your finger on it. Its tooltip shows while you hold, and follows your finger as you slide.",
+        "|cffffd200Right-click|r: hold, then lift where you started. That uses an item, buys it, opens a menu...",
+        "|cffffd200Changed your mind?|r Slide your finger away before you lift, and nothing happens.",
+        "Item tooltips always compare with what you're wearing.",
+        "|cffffd200Scroll|r a list, the chat or a window: drag up or down on it.",
+    } },
+    { title = "Shift, Ctrl and Alt", text = {
+        "Tap the |cffffd200key button|r on the top bar: Shift, again for Ctrl, again for Alt, again for off.",
+        "It glows while it waits. Your |cffffd200next|r tap, hold or drag uses it, then it turns off.",
+        "|cffffd200Shift + tap|r a stack: split it. At a vendor: buy several. With chat open: link the item.",
+        "|cffffd200Shift + hold and lift|r on an item with sockets: socket gems.",
+        "|cffffd200Ctrl + tap|r an item: try it on in the dressing room.",
+        "|cffffd200Alt + tap|r a slot on your character: choose from the items for that slot.",
+    } },
+    { title = "Bags and items", text = {
+        "The |cffffd200bag button|r on the top bar opens and closes all your bags.",
+        "|cffffd200Move a bag|r: drag it by its frame.",
+        "|cffffd200Move an item|r: tap it to pick it up, tap where it should go. Or drag it there.",
+        "|cffffd200Use or equip|r: hold the item, then lift.",
+        "|cffffd200Put a bag on|r: hold it in your bags, then lift. To swap one, pick it up, open the menu and tap a bag slot.",
+        "|cffffd200Take a bag off|r: drag its slot out of the menu, then tap an empty space in your bags (it has to be empty).",
+    } },
+    { title = "Menus and settings", text = {
+        "|cffffd200Menus|r (hold a portrait, a name in chat...) stay open until you pick something, tap Cancel, or go Back.",
+        "Entries with an |cffffd200arrow|r have more inside: hold the entry to open them, then tap your choice.",
+        "|cffffd200The menu|r (gear) has every game window, your bag slots and the settings:",
+        "Interface size, text size and chat text; render resolution and glow (lower for a cooler, longer-lasting phone); camera speed and invert; buttons on screen; battery saver.",
+        "|cffffd200Action bars|r switches between the wheel and the game's own bars. |cffffd200Defaults|r puts every touch setting back.",
+    } },
+}
+
+local help = CreateFrame("Frame", "TouchControlsHelp", UIParent)
+help:SetFrameStrata("DIALOG")
+help:SetToplevel(true)
+help:EnableMouse(true)
+help:SetBackdrop({
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+    tile = true, tileSize = 32, edgeSize = 32,
+    insets = { left = 11, right = 12, top = 12, bottom = 11 },
+})
+help:Hide()
+tinsert(UISpecialFrames, "TouchControlsHelp")
+
+local helpFill = help:CreateTexture(nil, "BACKGROUND")
+helpFill:SetTexture(0.04, 0.04, 0.04, 0.94)
+helpFill:SetPoint("TOPLEFT", 11, -12)
+helpFill:SetPoint("BOTTOMRIGHT", -12, 11)
+
+local helpHeader = help:CreateTexture(nil, "ARTWORK")
+helpHeader:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Header")
+helpHeader:SetWidth(320)
+helpHeader:SetHeight(64)
+helpHeader:SetPoint("TOP", 0, 12)
+
+local helpTitle = help:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+helpTitle:SetPoint("TOP", helpHeader, "TOP", 0, -14)
+helpTitle:SetText("How to play with touch")
+
+-- The page: a framed panel with the section's title and its lines.
+local helpPage = CreateFrame("Frame", nil, help)
+helpPage:SetBackdrop({
+    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+    tile = true, tileSize = 16, edgeSize = 16,
+    insets = { left = 4, right = 4, top = 4, bottom = 4 },
+})
+helpPage:SetBackdropColor(0.1, 0.1, 0.1, 0.9)
+helpPage:SetBackdropBorderColor(0.6, 0.55, 0.45)
+
+local helpPageTitle = helpPage:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+local helpLines = {}
+
+local helpSections = {}
+local helpClose = CreateFrame("Button", "TouchControlsHelpClose", help, "UIPanelButtonTemplate")
+helpClose:SetText(CLOSE or "Close")
+helpClose:SetScript("OnClick", function()
+    help:Hide()
+end)
+
+local helpShowing = 1
+
+local function ShowHelpSection(index)
+    helpShowing = index
+    local section = HELP[index]
+    helpPageTitle:SetText(section.title)
+
+    for i, line in ipairs(helpLines) do
+        line:SetText(section.text[i] or "")
+    end
+
+    for i, button in ipairs(helpSections) do
+        if i == index then
+            button:LockHighlight()
+        else
+            button:UnlockHighlight()
+        end
+    end
+end
+
+for index, section in ipairs(HELP) do
+    local button = CreateFrame("Button", "TouchControlsHelpSection" .. index, help, "UIPanelButtonTemplate")
+    button:SetText(section.title)
+    button:SetScript("OnClick", function()
+        ShowHelpSection(index)
+    end)
+    helpSections[index] = button
+end
+
+for index = 1, 7 do
+    local line = helpPage:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    line:SetJustifyH("LEFT")
+    line:SetJustifyV("TOP")
+    helpLines[index] = line
+end
+
+-- Most of the screen: the sections down the left, the page on the right, Close under it.
+local function LayoutHelp()
+    local width, height = ScreenWidth(), ScreenHeight()
+    local helpWidth, helpHeight = width * 0.86, height * 0.84
+    local margin = height * 0.035
+    local listWidth = helpWidth * 0.28
+    local buttonScale = height * 0.06 / 26
+    local inset = height * 0.025
+
+    help:SetWidth(helpWidth)
+    help:SetHeight(helpHeight)
+    help:ClearAllPoints()
+    help:SetPoint("CENTER", UIParent, "CENTER", 0, -height * 0.04)
+
+    -- The section buttons, evenly down the left, a finger tall each.
+    local rowHeight = (helpHeight - margin * 3 - 26 * buttonScale) / #helpSections
+
+    for index, button in ipairs(helpSections) do
+        button:SetScale(buttonScale)
+        button:SetWidth(listWidth / buttonScale)
+        button:SetHeight(min(rowHeight * 0.82, height * 0.09) / buttonScale)
+        button:ClearAllPoints()
+        button:SetPoint("TOPLEFT", help, "TOPLEFT", margin / buttonScale, -(margin + (index - 1) * rowHeight) / buttonScale)
+    end
+
+    local pageWidth = helpWidth - listWidth - margin * 3
+    local pageHeight = helpHeight - margin * 3 - 26 * buttonScale
+    helpPage:SetWidth(pageWidth)
+    helpPage:SetHeight(pageHeight)
+    helpPage:ClearAllPoints()
+    helpPage:SetPoint("TOPLEFT", help, "TOPLEFT", margin * 2 + listWidth, -margin)
+
+    helpPageTitle:ClearAllPoints()
+    helpPageTitle:SetPoint("TOPLEFT", helpPage, "TOPLEFT", inset, -inset)
+
+    -- Each line in a row of its own, wrapped to the page.
+    local lineTop = inset + height * 0.07
+    local lineHeight = (pageHeight - lineTop - inset) / #helpLines
+
+    for index, line in ipairs(helpLines) do
+        line:SetFont(line:GetFont(), height * 0.03)
+        line:SetWidth(pageWidth - inset * 2)
+        line:SetHeight(lineHeight)
+        line:ClearAllPoints()
+        line:SetPoint("TOPLEFT", helpPage, "TOPLEFT", inset, -(lineTop + (index - 1) * lineHeight))
+    end
+
+    helpClose:SetScale(buttonScale)
+    helpClose:SetWidth(140)
+    helpClose:SetHeight(26)
+    helpClose:ClearAllPoints()
+    helpClose:SetPoint("BOTTOMRIGHT", help, "BOTTOMRIGHT", -margin / buttonScale, margin / buttonScale)
+end
+
+function TouchControls_ShowHelp()
+    menu:Hide()
+    LayoutHelp()
+    ShowHelpSection(helpShowing)
+    help:Show()
+end
+
+helpButton:SetScript("OnClick", TouchControls_ShowHelp)
+
 -- A choice in a submenu hides only the submenu (the mouse leaving would close the rest, which it no longer does): the
 -- whole menu goes with it.
 hooksecurefunc("UIDropDownMenuButton_OnClick", function(self)
@@ -2117,6 +2333,12 @@ addon:SetScript("OnEvent", function(self, event, name)
         SetCVar("ffxGlow", "0")
     end
 
+    -- The guide, the first time in the world.
+    if event == "PLAYER_ENTERING_WORLD" and not db.helpShown then
+        db.helpShown = true
+        TouchControls_ShowHelp()
+    end
+
     if event == "PLAYER_ENTERING_WORLD" and not db.touchSettingsChosen then
         db.touchSettingsChosen = true
         TouchSettings()
@@ -2174,6 +2396,8 @@ SlashCmdList.TOUCHCONTROLS = function(message)
 
     if message == "wheel" or message == "bars" then
         SetStyle(message)
+    elseif message == "help" then
+        TouchControls_ShowHelp()
     elseif message == "debug" then
         -- Every control's area, in Logs/Console.txt.
         for name, control in pairs(controls) do
@@ -2200,6 +2424,6 @@ SlashCmdList.TOUCHCONTROLS = function(message)
         db.hidden = message == "hide"
         ApplyHidden()
     else
-        DEFAULT_CHAT_FRAME:AddMessage("Touch Controls: /touch wheel, /touch bars (action buttons), /touch hide, /touch show.")
+        DEFAULT_CHAT_FRAME:AddMessage("Touch Controls: /touch help, /touch wheel, /touch bars (action buttons), /touch hide, /touch show.")
     end
 end

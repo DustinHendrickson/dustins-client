@@ -312,6 +312,9 @@ vehicles' leave button, ground-targeted spells.
   - The display may run at 120 Hz whatever the game asks: the swap waits for as many refreshes as make a frame at
     the game's rate (two for 60, four for the battery saver's 30), from the display's refresh rate asked every two
     seconds.
+  - A guide, How to play with touch, opens by itself the first time in the world and from the menu's How to play
+    button or /touch help: seven sections (moving and the camera, spells and the wheel, the top bar, reading and
+    right-clicking, Shift / Ctrl / Alt, bags and items, menus and settings).
   - `/touch debug` logs the controls' areas and each bar page's used slots to `Logs/Console.txt`; the property
     `debug.wow.input` at 1 logs every touch, how it is routed and what goes to the game (`adb logcat -s WoWInput`).
   Not yet tested: pinch (the emulator does it with Ctrl and a drag), a hold on the world, two fingers at once, and
