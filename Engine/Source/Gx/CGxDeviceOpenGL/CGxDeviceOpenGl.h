@@ -142,8 +142,9 @@ class CGxDeviceOpenGl : public CGxDevice {
     void ApplyMacCursor();
 #endif
 
-#if defined(WOWDECOMP_PLATFORM_SWITCH)
-    // The Switch hides the game's cursor while a controller is in play mode (Os/Switch/Input.cpp).
+#if defined(WOWDECOMP_PLATFORM_SWITCH) || defined(WOWDECOMP_PLATFORM_ANDROID)
+    // The Switch hides the game's cursor while a controller is in play mode (Os/Switch/Input.cpp), Android while
+    // fingers rather than a mouse are in use (Os/Android/Input.cpp).
     virtual void ICursorDraw();
 #endif
 

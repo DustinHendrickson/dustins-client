@@ -48,8 +48,10 @@ for density in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
 done
 
 "$BUILD_TOOLS/aapt2" compile --dir "$STAGE/res" -o "$STAGE/compiled/res.zip"
+
+# Assets: the add-ons installed into Interface/AddOns at every start (WoW/Source/Android/main.cpp).
 "$BUILD_TOOLS/aapt2" link -o "$STAGE/unaligned.apk" -I "$PLATFORM" --manifest "$ROOT/Tools/Android/AndroidManifest.xml" \
-    "$STAGE/compiled/res.zip"
+    -A "$ROOT/Tools/Android/assets" "$STAGE/compiled/res.zip"
 
 # libwow.so without its symbols (bin/Android keeps them, for crash addresses), stored uncompressed so it loads straight
 # from the APK (extractNativeLibs="false").

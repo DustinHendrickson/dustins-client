@@ -1,0 +1,7 @@
+## Interface: 30300
+## Title: Touch Controls
+## Notes: On-screen joystick, buttons and action wheel for playing on a phone or tablet.
+## Author: wowdecomp
+## Version: 1.0
+## SavedVariables: TouchControlsDB
+TouchControls.lua

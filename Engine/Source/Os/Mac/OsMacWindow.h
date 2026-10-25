@@ -69,7 +69,11 @@ void OsMacSetWindowListener(void* window, OsMacWindowListener listener, void* pa
 // The screen in pixels: 1920x1080 docked, 1280x720 handheld, as of when the game started.
 void OsMacGetScreenSize(int32_t* width, int32_t* height);
 
-// Whether the game's cursor should be left undrawn: a controller in play mode, where the right stick turns the camera.
+#endif
+
+#if defined(__SWITCH__) || defined(__ANDROID__)
+// Whether the game's cursor should be left undrawn: on the Switch, a controller in play mode, where the right stick
+// turns the camera; on Android, fingers rather than a mouse.
 bool OsMacCursorHidden();
 #endif
 

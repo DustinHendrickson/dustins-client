@@ -108,10 +108,10 @@ releases mouselook for the click and resumes it, so turning and clicking an acti
 ### Overlay controls (TouchControls add-on)
 
 - **Jump**, **Interact** (the Switch port's: loot the nearest body, talk to the nearest NPC, use the nearest object,
-  `SwitchControls_Interact` shared), **Target nearest enemy** (Tab) and **nearest friendly / neutral** (the Switch's
+  shared as `Ui/Mac/PortActions`), **Target nearest enemy** (Tab) and **nearest friendly / neutral** (the Switch's
   `TargetNonHostile`), **Chat** (opens the chat box and the keyboard), **Menu** (Escape), and a **hide controls**
   toggle for screenshots and cutscenes.
-- **Action buttons**, both styles with an option to switch: a **thumb wheel** (six to eight large buttons fanned
+- **Action buttons**, both styles with an option to switch: a **thumb wheel** (twelve large buttons fanned
   around the bottom-right corner, bound to action bar 1, with a button that pages it to bars 2 and 3) and the
   **default bars enlarged** for touch. The default bars stay usable for drag-and-drop setup either way.
 - Drawn with the game's UI art at a size from the screen's physical size; positions and opacity adjustable in an
@@ -202,3 +202,20 @@ face buttons are action keys), with Android's button names in the hints. Touch a
     which Android's allocator turns into a fault.
   - The build ID in `Logs/Console.txt` is regenerated on every build (`cmake/BuildId.cmake`).
   - The emulator needs its hardware keyboard on (`hw.keyboard = yes`) to take the Mac's keyboard.
+- **Milestone 5 (touch): in progress.** The finger router (`Os/Android/Input.cpp`) and the TouchControls add-on
+  (`Tools/Android/assets/AddOns/TouchControls`, installed into `Interface/AddOns` at every start) are in. Tested on the
+  emulator in the world with `adb shell input`: the joystick walks and strafes in all eight directions, a drag on the
+  world turns the camera and the character, a tap on the world doesn't move anything, and the jump, menu, page and
+  wheel controls press their keys.
+  - The look: every control is a round icon (`SetPortraitToTexture`) in the minimap's ring, lit while a finger holds
+    it (`TouchControls_IsHeld`). The wheel is a fan of twelve around jump, three rows of four, that only shows what keys 1 to = cast now
+    (the main bar's page, a stance's or possession's bar, a vehicle's), with range, mana, cooldown and active states;
+    the game's action bars are put away, leaving the experience bar at the screen's edge and the stance and pet bars
+    above it. The page button pages to the next page with anything on it, and play starts on one.
+  - The micro buttons and bags live in a menu dialog (the gear at the top), with the style switch.
+  - A control under a game window (a bag, the map, a dialog) gives its fingers to the window.
+  - The game's cursor isn't drawn while fingers are in use, and the mouse leaves the screen after each tap, so
+    nothing stays highlighted or keeps a tooltip.
+  - `/touch debug` logs the controls' areas and each bar page's used slots to `Logs/Console.txt`.
+  Not yet tested: pinch (the emulator does it with Ctrl and a drag), a hold on the world, two fingers at once, and
+  interact and the targeting buttons next to NPCs and enemies.

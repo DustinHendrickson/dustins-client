@@ -169,6 +169,9 @@
 #if defined(WOWDECOMP_PLATFORM_SWITCH)
 #include "WoW/Source/Ui/Switch/SwitchControlsScript.h"
 #endif
+#if defined(WOWDECOMP_PLATFORM_ANDROID)
+#include "WoW/Source/Ui/Android/TouchControls.h"
+#endif
 
 // STATIC: 0x00BD0CC4
 static CWOWClientStatus* s_loadAddOnStatus;
@@ -6571,6 +6574,9 @@ void LoadScriptFunctions() {
 #if defined(WOWDECOMP_PLATFORM_SWITCH)
     SwitchControlsRegisterScriptFunctions();
 #endif
+#if defined(WOWDECOMP_PLATFORM_ANDROID)
+    TouchControlsRegisterScriptFunctions();
+#endif
 }
 
 // VERIFY: ce499890 manual
@@ -6655,5 +6661,8 @@ void UnloadScriptFunctions() {
     BattlenetUI_UnregisterScriptFunctions();
 #if defined(WOWDECOMP_PLATFORM_SWITCH)
     SwitchControlsUnregisterScriptFunctions();
+#endif
+#if defined(WOWDECOMP_PLATFORM_ANDROID)
+    TouchControlsUnregisterScriptFunctions();
 #endif
 }

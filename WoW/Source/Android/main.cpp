@@ -11,6 +11,7 @@
 
 #include <android/input.h>
 #include <android/looper.h>
+#include <android/asset_manager.h>
 #include <android/log.h>
 #include <android/native_activity.h>
 #include <android/native_window.h>
@@ -30,6 +31,7 @@
 #include "Engine/Source/Os/Android/AndroidSystem.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "WoW/Source/Client.h"
+#include "WoW/Source/Ui/Android/TouchControls.h"
 #include "WowBuildId.h"
 
 // What _NSGetArgc and _NSGetArgv report (Base/Compat/Android/crt_externs.h): the game reads its command line from
@@ -186,6 +188,55 @@ void PrepareConfig() {
     }
 }
 
+// The add-ons packed in the APK (Tools/Android/assets/AddOns) go into Interface/AddOns in the game folder (the working
+// directory), replacing older copies, so they always match the build. Asset folders list only their files: each add-on
+// is one folder of files.
+void InstallAddOns() {
+    static const char* const s_addOns[] = { "TouchControls" };
+
+    if (!s_activity || !s_activity->assetManager) {
+        return;
+    }
+
+    mkdir("Interface", 0777);
+    mkdir("Interface/AddOns", 0777);
+
+    for (const char* name : s_addOns) {
+        std::string source = std::string("AddOns/") + name;
+        std::string target = std::string("Interface/AddOns/") + name;
+        mkdir(target.c_str(), 0777);
+
+        AAssetDir* directory = AAssetManager_openDir(s_activity->assetManager, source.c_str());
+
+        if (!directory) {
+            continue;
+        }
+
+        while (const char* file = AAssetDir_getNextFileName(directory)) {
+            AAsset* asset = AAssetManager_open(s_activity->assetManager, (source + "/" + file).c_str(), AASSET_MODE_STREAMING);
+
+            if (!asset) {
+                continue;
+            }
+
+            if (FILE* out = fopen((target + "/" + file).c_str(), "wb")) {
+                char buffer[16384];
+                int read;
+
+                while ((read = AAsset_read(asset, buffer, sizeof(buffer))) > 0) {
+                    fwrite(buffer, 1, static_cast<size_t>(read), out);
+                }
+
+                fclose(out);
+            }
+
+            AAsset_close(asset);
+        }
+
+        AAssetDir_close(directory);
+    }
+}
+
 void* GameThread(void* param) {
     int result = 1;
 
@@ -199,8 +250,10 @@ void* GameThread(void* param) {
             chdir(folder.c_str());
             RedirectConsole();
             PrepareConfig();
+            InstallAddOns();
 
             StormRtlInitialize();
+            TouchControlsInitialize();
             result = CommonMain();
             fprintf(stderr, "Quit: the game has shut down (%d)\n", result);
         } else {

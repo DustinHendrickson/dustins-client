@@ -198,7 +198,7 @@ void CGxDeviceOpenGl::CursorUnlock(uint32_t x, uint32_t y) {
 }
 #endif
 
-#if defined(WOWDECOMP_PLATFORM_SWITCH)
+#if defined(WOWDECOMP_PLATFORM_SWITCH) || defined(WOWDECOMP_PLATFORM_ANDROID)
 void CGxDeviceOpenGl::ICursorDraw() {
     if (!OsMacCursorHidden()) {
         CGxDevice::ICursorDraw();
