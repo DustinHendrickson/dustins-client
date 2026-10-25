@@ -7632,6 +7632,50 @@ void CGGameUI::SaveSavedVariables() {
     }
 }
 
+#if defined(WOWDECOMP_PLATFORM_ANDROID)
+void CGGameUI::SaveForBackground() {
+    CVar::SaveAll();
+
+    if (!CGGameUI::m_initialized) {
+        return;
+    }
+
+    // SaveSavedVariables' writing, without letting go of the variables after.
+    for (int32_t i = 0; i < 2; i++) {
+        char path[260];
+
+        if (i) {
+            SStrPrintf(path, sizeof(path), "WTF\\Account\\%s\\%s\\%s", ClientServices::GetAccountName(), ClientServices::GetSelectedRealmName(), ClientServices::GetCharacterName());
+        } else {
+            SStrPrintf(path, sizeof(path), "WTF\\Account\\%s", ClientServices::GetAccountName());
+        }
+
+        if (!OsDirectoryExists(path)) {
+            OsCreateDirectory(path, 1);
+        }
+
+        SStrPack(path, "\\SavedVariables.lua", sizeof(path));
+        HOSFILE file = OsCreateFile(path, OS_GENERIC_WRITE, 0, OS_CREATE_ALWAYS, OS_FILE_ATTRIBUTE_NORMAL, OS_FILE_TYPE_ANY);
+
+        if (file == OS_INVALID_FILE) {
+            return;
+        }
+
+        for (SAVEDVARIABLE* variable = CGGameUI::s_savedVariables[i].m_fulllist.Head(); variable; variable = CGGameUI::s_savedVariables[i].Next(variable)) {
+            HASHKEY_STR name;
+            name = variable->m_key.m_str;
+            FrameScript_PrintVariable(file, name.m_str);
+        }
+
+        uint32_t written;
+        OsWriteFile(file, "\r\n", 2, &written);
+        OsCloseFile(file);
+    }
+
+    SFile::RebuildHash();
+}
+#endif
+
 // VERIFY: 974f32d5 auto
 // OFFSET: 0x00512D00
 void CGGameUI::HandleFocusChanged(const CFocusEvent& event) {

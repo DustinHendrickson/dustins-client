@@ -197,7 +197,7 @@ if (WOWDECOMP_PLATFORM_ANDROID)
     add_dependencies(Wow WowBuildId)
     target_include_directories(Wow PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
-    target_link_libraries(Wow PRIVATE android EGL GLESv3 log)
+    target_link_libraries(Wow PRIVATE android EGL GLESv3 log nativewindow)
 
     # NativeActivity finds ANativeActivity_onCreate by name; an undefined symbol must fail the link, not the start.
     target_link_options(Wow PRIVATE "-Wl,--no-undefined" "-Wl,-u,ANativeActivity_onCreate")

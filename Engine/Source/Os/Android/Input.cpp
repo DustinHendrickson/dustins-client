@@ -19,9 +19,14 @@
 
 #include <android/input.h>
 #include <android/keycodes.h>
+#include <android/log.h>
+#include <sys/system_properties.h>
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -52,10 +57,15 @@ const uint64_t kTouchHoldMs = 500;
 // Fingers followed at once.
 const int32_t kFingers = 10;
 
-// Camera drag: relative mouse movement per pixel the finger moves. Pinch: how far the fingers' distance changes, in
-// pixels, for one notch of the mouse wheel.
-const float kCameraSpeed = 1.0f;
+// Pinch: how far the fingers' distance changes, in pixels, for one notch of the mouse wheel.
 const int32_t kPinchNotch = 36;
+
+// A double tap on the joystick (autorun): the taps no longer than this, and no further apart.
+const uint64_t kJoystickTapMs = 250;
+const uint64_t kDoubleTapMs = 400;
+
+// Scrolling a list: how far a finger drags, as a fraction of the screen's height, for one notch of the mouse wheel.
+const float kScrollNotch = 0.035f;
 
 // Joystick: how far the finger moves for a full push, as a fraction of the screen's height, and how much of that is a
 // dead zone. Each of its eight directions holds the movement keys for it.
@@ -77,9 +87,9 @@ struct RawEvent {
     int32_t action;         // AMOTION_EVENT_ACTION_* (masked) or AKEY_EVENT_ACTION_*
     int32_t pointerId;      // the finger an action is about
     int32_t count;          // fingers down
-    float x[4];
-    float y[4];
-    int32_t ids[4];
+    float x[kFingers];
+    float y[kFingers];
+    int32_t ids[kFingers];
     int32_t keyCode;
     int32_t metaState;
     int32_t repeat;
@@ -112,6 +122,8 @@ C2iVector s_mousePos;
 // The game's cursor is drawn only while a mouse is in use: a finger has no pointer to show (OsMacCursorHidden).
 bool s_mouseInUse;
 bool s_keyDown[KEY_LAST];
+// How many hold each key (a finger on a control, the joystick, the keyboard): it goes up when the last lets go.
+uint8_t s_keyHolds[KEY_LAST];
 bool s_needPoll = true;
 
 // The window, at the render size the device chose (AndroidInputSetRenderSize), and the surface it is shown on: touch
@@ -126,6 +138,7 @@ bool s_sizeChanged;
 enum FingerRole {
     Finger_Free,
     Finger_Deciding,    // the mouse moved there; UI or world is known the next poll
+    Finger_Waiting,     // down while the mouse's finger is still Deciding: a pinch, or the mouse next, once it's known
     Finger_Ui,          // the mouse, on the game's UI
     Finger_World,       // on the world, not yet a tap, hold or drag
     Finger_Camera,      // turning the camera (the right button held, relative movement)
@@ -134,6 +147,7 @@ enum FingerRole {
     Finger_Ignored,     // a finger with nothing to do (a second one on the UI, the one left after a pinch)
     Finger_Key,         // on a key control, holding its key
     Finger_Joystick,    // on the joystick
+    Finger_UiTap,       // on the UI while another finger has the mouse on the world: a tap, through the camera's hold
 };
 
 struct Finger {
@@ -143,7 +157,9 @@ struct Finger {
     C2iVector position;
     uint64_t downMs = 0;
     bool dragging = false;
-    bool lifted = false;        // lifted while Deciding: its tap happens once decided
+    bool scrolling = false;     // Finger_Ui: dragging over a list, which scrolls it (the mouse wheel)
+    int32_t scrollY = 0;        // where the last wheel notch was sent from
+    bool lifted = false;        // lifted while Deciding or Waiting: its tap happens once decided
     uint32_t decidePoll = 0;    // the poll after which its role can be decided
     int32_t key = KEY_NONE;     // Finger_Key: the key it holds, and its modifiers, and the control's name
     uint32_t modifiers = 0;
@@ -184,6 +200,26 @@ float s_pinchDistance;
 
 // The game's answer to "what is under the mouse": AndroidInputPoint.
 int32_t (*s_pointQuery)();
+bool (*s_uiAtPointQuery)(float x, float y);
+
+// Camera drag: relative mouse movement per pixel the finger moves, and whether up and down are swapped (the
+// add-on's options, AndroidInputSetCamera).
+float s_cameraSpeed = 1.0f;
+bool s_cameraInvert;
+
+// Autorun on a double tap of the joystick: its binding's key (AndroidInputSetAutorunKey), and when the last tap was.
+int32_t s_autorunKey = KEY_NONE;
+uint32_t s_autorunModifiers;
+uint64_t s_joystickTapMs;
+
+// A tap on the UI by a second finger while the first turns the camera: mouselook lets go for the click, which happens
+// once the game is out of relative mode, and takes the mouse back after (PollTouch).
+bool s_tapThroughPending;
+C2iVector s_tapThroughPoint;
+bool (*s_wheelQuery)();
+void (*s_lowMemoryHandler)();
+void (*s_backgroundHandler)();
+std::atomic<bool> s_lowMemory;
 
 // The game window (OsMacWindow.h): the activity's, at the render size the game asked for, and the device's listener for
 // focus and the app going to the background.
@@ -212,15 +248,36 @@ void ClampToContent(C2iVector& point) {
     point.y = point.y < 0 ? 0 : (point.y >= s_contentHeight ? s_contentHeight - 1 : point.y);
 }
 
+// Input diagnostics: with the property debug.wow.input at 1, every touch, how it is routed and what goes to the game
+// are logged (adb logcat -s WoWInput).
+void Trace(const char* format, ...) {
+    static int32_t s_trace = -1;
+
+    if (s_trace < 0) {
+        char value[PROP_VALUE_MAX] = {};
+        __system_property_get("debug.wow.input", value);
+        s_trace = value[0] == '1';
+    }
+
+    if (s_trace) {
+        va_list args;
+        va_start(args, format);
+        __android_log_vprint(ANDROID_LOG_INFO, "WoWInput", format, args);
+        va_end(args);
+    }
+}
+
 void PutKey(KEY key, bool down) {
     if (key >= 0 && key < KEY_LAST) {
-        if (s_keyDown[key] == down) {
+        if (down ? s_keyHolds[key]++ > 0 : (s_keyHolds[key] == 0 || --s_keyHolds[key] > 0)) {
+            Trace("key %d %s skipped: %d hold it", key, down ? "down" : "up", s_keyHolds[key]);
             return;
         }
 
         s_keyDown[key] = down;
     }
 
+    Trace("key %d %s", key, down ? "down" : "up");
     OsQueuePut(down ? OS_INPUT_KEY_DOWN : OS_INPUT_KEY_UP, key, 1, 0, 0);
 }
 
@@ -254,6 +311,7 @@ void MoveMouseTo(const C2iVector& point) {
     }
 
     s_mousePos = point;
+    Trace("mouse to %d,%d", point.x, point.y);
     OsQueuePut(OS_INPUT_MOUSE_MOVE, 0, point.x, point.y, 0);
 }
 
@@ -268,11 +326,13 @@ void PutMouseButton(MOUSEBUTTON button, bool down) {
         s_osButtonState &= ~button;
     }
 
+    Trace("mouse button %d %s at %d,%d (mode %d)", button, down ? "down" : "up", s_mousePos.x, s_mousePos.y, s_osMouseMode);
     OsQueuePut(down ? OS_INPUT_MOUSE_DOWN : OS_INPUT_MOUSE_UP, button, s_mousePos.x, s_mousePos.y, 0);
 }
 
 void PutWheel(int32_t notches) {
     if (notches) {
+        Trace("wheel %d", notches);
         OsQueuePut(OS_INPUT_MOUSE_WHEEL, notches * 120, s_mousePos.x, s_mousePos.y, 0);
     }
 }
@@ -324,9 +384,11 @@ void TypeText(const std::string& text) {
     }
 }
 
+// A finger still on the screen by its pointer id: one lifted while Deciding is done with its pointer, which the next
+// touch may already be using.
 Finger* FindFinger(int32_t id) {
     for (Finger& finger : s_fingers) {
-        if (finger.role != Finger_Free && finger.id == id) {
+        if (finger.role != Finger_Free && !finger.lifted && finger.id == id) {
             return &finger;
         }
     }
@@ -366,6 +428,12 @@ void FlushLook() {
 
 void EndCamera(Finger& finger) {
     if (finger.role == Finger_Camera) {
+        // Not yet turning (relative mode comes a poll after the button): a release where it went down would be a
+        // right-click on the world there (talk, attack), so it happens off the screen.
+        if (s_osMouseMode != OS_MOUSE_MODE_RELATIVE) {
+            MoveMouseTo(C2iVector { -1, -1 });
+        }
+
         PutMouseButton(MOUSE_BUTTON_RIGHT, false);
         s_lookX = 0.0f;
         s_lookY = 0.0f;
@@ -494,6 +562,7 @@ void FingerDown(int32_t id, const C2iVector& point, uint64_t now) {
     }
 
     if (!finger) {
+        Trace("finger %d down at %d,%d: no free slot", id, point.x, point.y);
         return;
     }
 
@@ -503,12 +572,24 @@ void FingerDown(int32_t id, const C2iVector& point, uint64_t now) {
     finger->position = point;
     finger->downMs = now;
 
+    Trace("finger %d down at %d,%d (content %dx%d, %zu controls, mouse finger %d, joystick finger %d)", id, point.x, point.y,
+        s_contentWidth, s_contentHeight, s_controls.size(), s_mouseFinger, s_joystickFinger);
+
     // Overlay controls come first, whatever the game has under them.
     if (const Control* control = ControlAt(point)) {
+        Trace("  on control %s", control->name.c_str());
+
         if (control->joystick) {
             if (s_joystickFinger < 0) {
                 finger->role = Finger_Joystick;
                 s_joystickFinger = FingerIndex(finger);
+
+                // The second tap of a double tap: autorun (moving after it stops it, as the movement keys do).
+                if (s_autorunKey != KEY_NONE && s_joystickTapMs && now - s_joystickTapMs <= kDoubleTapMs) {
+                    s_joystickTapMs = 0;
+                    PutControlKey(s_autorunKey, s_autorunModifiers, true);
+                    PutControlKey(s_autorunKey, s_autorunModifiers, false);
+                }
             } else {
                 finger->role = Finger_Ignored;
             }
@@ -534,8 +615,25 @@ void FingerDown(int32_t id, const C2iVector& point, uint64_t now) {
 
     Finger& owner = s_fingers[s_mouseFinger];
 
-    // A second finger while the first is on the world zooms.
+    // The first finger isn't placed yet (it decides a poll or two after landing, and two fingers of a pinch land
+    // closer together than that): this one waits for it (PollTouch).
+    if (owner.role == Finger_Deciding) {
+        finger->role = Finger_Waiting;
+        return;
+    }
+
+    // A second finger on the UI while the first is on the world taps the UI (an action bar, a unit frame, a window),
+    // through the camera's hold on the mouse; elsewhere it zooms.
     if (owner.role == Finger_World || owner.role == Finger_Camera) {
+        float x = s_contentWidth ? static_cast<float>(point.x) / static_cast<float>(s_contentWidth) : 0.0f;
+        float y = s_contentHeight ? 1.0f - static_cast<float>(point.y) / static_cast<float>(s_contentHeight) : 0.0f;
+
+        if (s_uiAtPointQuery && s_uiAtPointQuery(x, y)) {
+            finger->role = Finger_UiTap;
+            Trace("  on the UI beside the camera");
+            return;
+        }
+
         BeginPinch(owner, *finger);
         return;
     }
@@ -554,12 +652,31 @@ void FingerMove(Finger& finger, const C2iVector& point) {
 
     switch (finger.role) {
         case Finger_Ui:
-            if (!finger.dragging && BeyondSlop(finger)) {
-                PutMouseButton(MOUSE_BUTTON_LEFT, true);
-                finger.dragging = true;
+            // Up or down over something that takes the mouse wheel (a list, the chat) scrolls it; any other drag holds
+            // the button down and moves the mouse, for sliders, item dragging and moving windows.
+            if (!finger.dragging && !finger.scrolling && BeyondSlop(finger)) {
+                int32_t dx = std::abs(point.x - finger.start.x);
+                int32_t dy = std::abs(point.y - finger.start.y);
+
+                if (dy > dx && s_wheelQuery && s_wheelQuery()) {
+                    finger.scrolling = true;
+                    finger.scrollY = finger.start.y;
+                } else {
+                    PutMouseButton(MOUSE_BUTTON_LEFT, true);
+                    finger.dragging = true;
+                }
             }
 
-            if (finger.dragging) {
+            if (finger.scrolling) {
+                // Content follows the finger: dragging down shows what is above, a notch up of the wheel.
+                int32_t notch = std::max(1, static_cast<int32_t>(s_contentHeight * kScrollNotch));
+                int32_t notches = (point.y - finger.scrollY) / notch;
+
+                if (notches) {
+                    PutWheel(notches);
+                    finger.scrollY += notches * notch;
+                }
+            } else if (finger.dragging) {
                 MoveMouseTo(point);
             }
 
@@ -570,15 +687,15 @@ void FingerMove(Finger& finger, const C2iVector& point) {
                 // Turning starts where the finger went down: the mouse is there, on the world.
                 PutMouseButton(MOUSE_BUTTON_RIGHT, true);
                 finger.role = Finger_Camera;
-                s_lookX = static_cast<float>(point.x - finger.start.x) * kCameraSpeed;
-                s_lookY = static_cast<float>(point.y - finger.start.y) * kCameraSpeed;
+                s_lookX = static_cast<float>(point.x - finger.start.x) * s_cameraSpeed;
+                s_lookY = static_cast<float>(point.y - finger.start.y) * s_cameraSpeed * (s_cameraInvert ? -1.0f : 1.0f);
             }
 
             break;
 
         case Finger_Camera:
-            s_lookX += static_cast<float>(point.x - previous.x) * kCameraSpeed;
-            s_lookY += static_cast<float>(point.y - previous.y) * kCameraSpeed;
+            s_lookX += static_cast<float>(point.x - previous.x) * s_cameraSpeed;
+            s_lookY += static_cast<float>(point.y - previous.y) * s_cameraSpeed * (s_cameraInvert ? -1.0f : 1.0f);
             FlushLook();
             break;
 
@@ -616,8 +733,11 @@ void FingerMove(Finger& finger, const C2iVector& point) {
 }
 
 void FingerUp(Finger& finger, bool cancel) {
+    Trace("finger %d %s (role %d)", finger.id, cancel ? "cancelled" : "up", finger.role);
+
     switch (finger.role) {
         case Finger_Deciding:
+        case Finger_Waiting:
             if (!cancel) {
                 // Its tap happens once the game says what it is on.
                 finger.lifted = true;
@@ -627,6 +747,10 @@ void FingerUp(Finger& finger, bool cancel) {
             break;
 
         case Finger_Ui:
+            if (finger.scrolling) {
+                break;
+            }
+
             if (finger.dragging) {
                 PutMouseButton(MOUSE_BUTTON_LEFT, false);
             } else if (!cancel) {
@@ -653,6 +777,25 @@ void FingerUp(Finger& finger, bool cancel) {
         case Finger_Joystick:
             SetJoystickKeys(0);
             s_joystickFinger = -1;
+
+            // A quick touch that didn't push: half of a double tap (FingerDown).
+            if (!cancel && !BeyondSlop(finger) && OsGetAsyncTimeMs() - finger.downMs <= kJoystickTapMs) {
+                s_joystickTapMs = OsGetAsyncTimeMs();
+            }
+
+            break;
+
+        case Finger_UiTap:
+            if (!cancel && !BeyondSlop(finger)) {
+                s_tapThroughPending = true;
+                s_tapThroughPoint = finger.start;
+
+                // Turning the camera, the right button holds the mouse: it lets go first.
+                if (s_osMouseMode == OS_MOUSE_MODE_RELATIVE) {
+                    PutMouseButton(MOUSE_BUTTON_RIGHT, false);
+                }
+            }
+
             break;
 
         case Finger_Pinch: {
@@ -684,10 +827,24 @@ void FingerUp(Finger& finger, bool cancel) {
 }
 
 void HandleTouch(const RawEvent& event, uint64_t now) {
+    if (event.action != AMOTION_EVENT_ACTION_MOVE) {
+        Trace("touch action %d pointer %d of %d", event.action, event.pointerId, event.count);
+    }
+
     switch (event.action) {
         case AMOTION_EVENT_ACTION_DOWN:
+            // The first finger on an empty screen: any other still thought down missed its lift (a gesture the system
+            // took, say), and lets go now rather than holding the mouse or the joystick for good.
+            for (Finger& finger : s_fingers) {
+                if (finger.role != Finger_Free && !finger.lifted) {
+                    FingerUp(finger, true);
+                }
+            }
+
+            [[fallthrough]];
+
         case AMOTION_EVENT_ACTION_POINTER_DOWN:
-            for (int32_t i = 0; i < event.count && i < 4; i++) {
+            for (int32_t i = 0; i < event.count && i < kFingers; i++) {
                 if (event.ids[i] == event.pointerId) {
                     FingerDown(event.pointerId, ToContent(event.x[i], event.y[i]), now);
                 }
@@ -696,7 +853,7 @@ void HandleTouch(const RawEvent& event, uint64_t now) {
             break;
 
         case AMOTION_EVENT_ACTION_MOVE:
-            for (int32_t i = 0; i < event.count && i < 4; i++) {
+            for (int32_t i = 0; i < event.count && i < kFingers; i++) {
                 if (Finger* finger = FindFinger(event.ids[i])) {
                     FingerMove(*finger, ToContent(event.x[i], event.y[i]));
                 }
@@ -743,9 +900,11 @@ void PollTouch(uint64_t now) {
         if (finger.role == Finger_Deciding && s_pollCount > finger.decidePoll) {
             int32_t point = s_pointQuery ? s_pointQuery() : AndroidInputPoint_Ui;
             finger.role = point == AndroidInputPoint_World ? Finger_World : Finger_Ui;
+            Trace("finger %d decided: %s", finger.id, point == AndroidInputPoint_World ? "world" : point == AndroidInputPoint_Ui ? "ui" : "nothing (ui)");
 
             if (finger.lifted) {
-                FingerUp(finger, false);
+                // Moved past the slop before it was known what it was on: a flick, which clicks nothing.
+                FingerUp(finger, BeyondSlop(finger));
                 continue;
             }
 
@@ -753,7 +912,28 @@ void PollTouch(uint64_t now) {
             FingerMove(finger, finger.position);
         }
 
-        bool still = finger.role == Finger_Ui ? !finger.dragging : finger.role == Finger_World;
+        // A finger that landed while the mouse's was deciding: with it on the world, the two pinch; with it gone (a
+        // quick tap), this one is the mouse now, and taps in turn; with it on the UI, this one has nothing to do.
+        if (finger.role == Finger_Waiting) {
+            Finger* owner = s_mouseFinger >= 0 ? &s_fingers[s_mouseFinger] : nullptr;
+
+            if (!owner) {
+                finger.role = Finger_Deciding;
+                finger.decidePoll = s_pollCount + 1;
+                s_mouseFinger = FingerIndex(&finger);
+                MoveMouseTo(finger.start);
+            } else if (owner->role == Finger_Deciding) {
+                continue;
+            } else if (finger.lifted) {
+                FingerUp(finger, true);
+            } else if (owner->role == Finger_World || owner->role == Finger_Camera) {
+                BeginPinch(*owner, finger);
+            } else {
+                finger.role = Finger_Ignored;
+            }
+        }
+
+        bool still = finger.role == Finger_Ui ? !finger.dragging && !finger.scrolling : finger.role == Finger_World;
 
         if (still && now - finger.downMs >= kTouchHoldMs) {
             ClickAt(finger.start, MOUSE_BUTTON_RIGHT);
@@ -761,15 +941,79 @@ void PollTouch(uint64_t now) {
         }
     }
 
+    if (s_tapThroughPending && s_osMouseMode != OS_MOUSE_MODE_RELATIVE) {
+        s_tapThroughPending = false;
+        ClickAt(s_tapThroughPoint, MOUSE_BUTTON_LEFT);
+
+        // The camera finger takes the mouse back where it is, and turns on from there.
+        if (s_mouseFinger >= 0 && s_fingers[s_mouseFinger].role == Finger_Camera) {
+            Finger& camera = s_fingers[s_mouseFinger];
+            camera.start = camera.position;
+            MoveMouseTo(camera.position);
+            PutMouseButton(MOUSE_BUTTON_RIGHT, true);
+            s_lookX = 0.0f;
+            s_lookY = 0.0f;
+        } else if (s_mouseFinger >= 0) {
+            MoveMouseTo(s_fingers[s_mouseFinger].position);
+        }
+    }
+
     FlushLook();
 }
 
-void HandleMouse(const RawEvent& event) {
-    MoveMouseTo(ToContent(event.x[0], event.y[0]));
+// The app lost the focus or went to the background, where no lifts come: every finger lets go, and every key and
+// button still down goes up, so nothing stays held (the joystick running on, a drag, mouselook).
+void ReleaseAll() {
+    for (Finger& finger : s_fingers) {
+        if (finger.role != Finger_Free) {
+            FingerUp(finger, true);
+        }
+    }
 
-    PutMouseButton(MOUSE_BUTTON_LEFT, (event.buttons & AMOTION_EVENT_BUTTON_PRIMARY) != 0);
-    PutMouseButton(MOUSE_BUTTON_RIGHT, (event.buttons & AMOTION_EVENT_BUTTON_SECONDARY) != 0);
-    PutMouseButton(MOUSE_BUTTON_MIDDLE, (event.buttons & AMOTION_EVENT_BUTTON_TERTIARY) != 0);
+    for (int32_t key = 0; key < KEY_LAST; key++) {
+        if (s_keyHolds[key]) {
+            s_keyHolds[key] = 1;
+            PutKey(static_cast<KEY>(key), false);
+        }
+    }
+
+    PutMouseButton(MOUSE_BUTTON_LEFT, false);
+    PutMouseButton(MOUSE_BUTTON_RIGHT, false);
+    PutMouseButton(MOUSE_BUTTON_MIDDLE, false);
+    s_lookX = 0.0f;
+    s_lookY = 0.0f;
+    s_tapThroughPending = false;
+}
+
+void HandleMouse(const RawEvent& event) {
+    static C2iVector s_last;
+    C2iVector point = ToContent(event.x[0], event.y[0]);
+
+    // While the game turns the camera (relative mode) the mouse's movement is what counts, not where it is.
+    if (s_osMouseMode == OS_MOUSE_MODE_RELATIVE) {
+        if (point.x != s_last.x || point.y != s_last.y) {
+            OsQueuePut(OS_INPUT_MOUSE_MOVE_RELATIVE, 0, point.x - s_last.x, point.y - s_last.y, 0);
+        }
+    } else {
+        MoveMouseTo(point);
+    }
+
+    s_last = point;
+
+    // Buttons change only on button events: a hover reports none held, which would let go of a finger's drag.
+    switch (event.action) {
+        case AMOTION_EVENT_ACTION_DOWN:
+        case AMOTION_EVENT_ACTION_UP:
+        case AMOTION_EVENT_ACTION_BUTTON_PRESS:
+        case AMOTION_EVENT_ACTION_BUTTON_RELEASE:
+            PutMouseButton(MOUSE_BUTTON_LEFT, (event.buttons & AMOTION_EVENT_BUTTON_PRIMARY) != 0);
+            PutMouseButton(MOUSE_BUTTON_RIGHT, (event.buttons & AMOTION_EVENT_BUTTON_SECONDARY) != 0);
+            PutMouseButton(MOUSE_BUTTON_MIDDLE, (event.buttons & AMOTION_EVENT_BUTTON_TERTIARY) != 0);
+            break;
+
+        default:
+            break;
+    }
 
     if (event.scroll != 0.0f) {
         PutWheel(event.scroll > 0.0f ? 1 : -1);
@@ -1003,9 +1247,12 @@ void PollKeyboard(uint64_t now) {
     }
 }
 
+void UpdateGestureExclusion();
+
 void Poll() {
     uint64_t now = OsGetAsyncTimeMs();
     std::vector<RawEvent> events;
+    bool exclusionStale = false;
 
     {
         std::lock_guard<std::mutex> lock(s_rawLock);
@@ -1015,9 +1262,14 @@ void Poll() {
             s_pendingSize = false;
             s_surfaceWidth = s_pendingWidth;
             s_surfaceHeight = s_pendingHeight;
+            exclusionStale = true;
         }
 
         if (s_pendingFocus >= 0) {
+            if (!s_pendingFocus) {
+                ReleaseAll();
+            }
+
             OsQueuePut(OS_INPUT_FOCUS, s_pendingFocus, 0, 0, 0);
             Notify(s_pendingFocus ? OsMacWindowEvent_FocusGained : OsMacWindowEvent_FocusLost);
             s_pendingFocus = -1;
@@ -1051,7 +1303,25 @@ void Poll() {
 
     if (generation != s_windowGeneration) {
         s_windowGeneration = generation;
+
+        if (!window) {
+            ReleaseAll();
+
+            if (s_backgroundHandler) {
+                s_backgroundHandler();
+            }
+        }
+
         Notify(window ? OsMacWindowEvent_Restored : OsMacWindowEvent_Minimized);
+    }
+
+    if (s_lowMemory.exchange(false) && s_lowMemoryHandler) {
+        s_lowMemoryHandler();
+    }
+
+    // The joystick's gesture exclusion is in the surface's pixels.
+    if (exclusionStale) {
+        UpdateGestureExclusion();
     }
 
     PollTouch(now);
@@ -1083,7 +1353,7 @@ int32_t AndroidInputHandleEvent(const AInputEvent* input) {
         event.pointerId = AMotionEvent_getPointerId(input, (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
         event.count = static_cast<int32_t>(AMotionEvent_getPointerCount(input));
 
-        for (int32_t i = 0; i < event.count && i < 4; i++) {
+        for (int32_t i = 0; i < event.count && i < kFingers; i++) {
             event.x[i] = AMotionEvent_getX(input, i);
             event.y[i] = AMotionEvent_getY(input, i);
             event.ids[i] = AMotionEvent_getPointerId(input, i);
@@ -1150,6 +1420,27 @@ void SetControl(const char* name, float left, float bottom, float right, float t
     s_controls.push_back(control);
 }
 
+// The joystick's area keeps the system's back gesture off its edge of the screen, so a thumb landing near the edge
+// moves rather than going back (the game's Escape). Sent when it changes.
+void UpdateGestureExclusion() {
+    static std::vector<int32_t> s_sent;
+    std::vector<int32_t> rects;
+
+    for (const Control& control : s_controls) {
+        if (control.joystick && s_surfaceWidth && s_surfaceHeight) {
+            rects.push_back(static_cast<int32_t>(control.left * s_surfaceWidth));
+            rects.push_back(static_cast<int32_t>((1.0f - control.top) * s_surfaceHeight));
+            rects.push_back(static_cast<int32_t>(control.right * s_surfaceWidth));
+            rects.push_back(static_cast<int32_t>((1.0f - control.bottom) * s_surfaceHeight));
+        }
+    }
+
+    if (rects != s_sent) {
+        s_sent = rects;
+        AndroidSetGestureExclusion(rects.data(), static_cast<int32_t>(rects.size() / 4));
+    }
+}
+
 }
 
 void AndroidInputSetKeyControl(const char* name, float left, float bottom, float right, float top, int32_t key, uint32_t modifiers) {
@@ -1158,12 +1449,19 @@ void AndroidInputSetKeyControl(const char* name, float left, float bottom, float
 
 void AndroidInputSetJoystick(const char* name, float left, float bottom, float right, float top) {
     SetControl(name, left, bottom, right, top, true, KEY_NONE, 0);
+    UpdateGestureExclusion();
 }
 
 void AndroidInputRemoveControl(const char* name) {
     for (auto control = s_controls.begin(); control != s_controls.end(); ++control) {
         if (control->name == (name ? name : "")) {
+            bool joystick = control->joystick;
             s_controls.erase(control);
+
+            if (joystick) {
+                UpdateGestureExclusion();
+            }
+
             return;
         }
     }
@@ -1172,6 +1470,7 @@ void AndroidInputRemoveControl(const char* name) {
 void AndroidInputClearControls() {
     // Fingers on controls keep their roles until they lift, so their keys come back up.
     s_controls.clear();
+    UpdateGestureExclusion();
 }
 
 bool AndroidInputGetJoystick(float* originX, float* originY, float* x, float* y) {
@@ -1198,6 +1497,36 @@ bool AndroidInputControlHeld(const char* name) {
 
 void AndroidInputSetPointQuery(int32_t (*query)()) {
     s_pointQuery = query;
+}
+
+void AndroidInputSetWheelQuery(bool (*query)()) {
+    s_wheelQuery = query;
+}
+
+void AndroidInputSetUiAtPointQuery(bool (*query)(float x, float y)) {
+    s_uiAtPointQuery = query;
+}
+
+void AndroidInputSetCamera(float speed, bool invert) {
+    s_cameraSpeed = speed > 0.0f ? speed : 1.0f;
+    s_cameraInvert = invert;
+}
+
+void AndroidInputSetAutorunKey(int32_t key, uint32_t modifiers) {
+    s_autorunKey = key;
+    s_autorunModifiers = modifiers;
+}
+
+void AndroidInputSetBackgroundHandler(void (*handler)()) {
+    s_backgroundHandler = handler;
+}
+
+void AndroidInputLowMemory() {
+    s_lowMemory = true;
+}
+
+void AndroidInputSetLowMemoryHandler(void (*handler)()) {
+    s_lowMemoryHandler = handler;
 }
 
 void AndroidInputSetTextFocus(bool focus) {

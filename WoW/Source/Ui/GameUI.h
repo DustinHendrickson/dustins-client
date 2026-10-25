@@ -147,6 +147,11 @@ class CGGameUI {
     static void LeaveWorld();
     static void CancelMirrorTimers();
     static void SaveSavedVariables();
+#if defined(WOWDECOMP_PLATFORM_ANDROID)
+    // Android may end the app in the background with no logout: the add-ons' saved variables and the settings are
+    // written as it goes there, the variables kept for the logout's own save.
+    static void SaveForBackground();
+#endif
     struct THREATMAP : public TSHashObject<THREATMAP, CHashKeyGUID> {
         /* 0020 */ TSGrowableArray<WOWGUID> m_units;
 

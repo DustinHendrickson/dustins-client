@@ -29,9 +29,11 @@
 #include "Engine/Source/BlizzardCore/Source/System/Process/Mac/GameDirectory.h"
 #include "Engine/Source/Os/Android/AndroidInput.h"
 #include "Engine/Source/Os/Android/AndroidSystem.h"
+#include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "WoW/Source/Client.h"
 #include "WoW/Source/Ui/Android/TouchControls.h"
+#include "WoW/Source/Ui/GameUI.h"
 #include "WowBuildId.h"
 
 // What _NSGetArgc and _NSGetArgv report (Base/Compat/Android/crt_externs.h): the game reads its command line from
@@ -188,6 +190,19 @@ void PrepareConfig() {
     }
 }
 
+// Short of memory (OnLowMemory, through the input poll): the textures kept for reuse after they went out of use are
+// let go; they load again when needed.
+void ReleaseTextureCache() {
+    fprintf(stderr, "Low memory: releasing the texture cache\n");
+    TextureGxCacheClear();
+}
+
+// Into the background, where Android may end the app (swiped away from the recent apps) with no logout: the settings
+// and the add-ons' saved variables are written now (CGGameUI::SaveForBackground).
+void SaveForBackground() {
+    CGGameUI::SaveForBackground();
+}
+
 // The add-ons packed in the APK (Tools/Android/assets/AddOns) go into Interface/AddOns in the game folder (the working
 // directory), replacing older copies, so they always match the build. Asset folders list only their files: each add-on
 // is one folder of files.
@@ -254,6 +269,8 @@ void* GameThread(void* param) {
 
             StormRtlInitialize();
             TouchControlsInitialize();
+            AndroidInputSetLowMemoryHandler(ReleaseTextureCache);
+            AndroidInputSetBackgroundHandler(SaveForBackground);
             result = CommonMain();
             fprintf(stderr, "Quit: the game has shut down (%d)\n", result);
         } else {
@@ -344,12 +361,18 @@ void OnNativeWindowCreated(ANativeActivity* activity, ANativeWindow* window) {
     AndroidSetWindow(window);
 }
 
-void OnNativeWindowResized(ANativeActivity* activity, ANativeWindow* window) {
-    AndroidInputSetSurfaceSize(ANativeWindow_getWidth(window), ANativeWindow_getHeight(window));
+// Touches come in the view's pixels. The window's own size is the render size once the device sets its buffers
+// (ANativeWindow_setBuffersGeometry), so later changes come from the content rectangle, which is in the view's.
+void OnContentRectChanged(ANativeActivity* activity, const ARect* rect) {
+    AndroidInputSetSurfaceSize(rect->right - rect->left, rect->bottom - rect->top);
 }
 
 void OnNativeWindowDestroyed(ANativeActivity* activity, ANativeWindow* window) {
     AndroidSetWindow(nullptr);
+}
+
+void OnLowMemory(ANativeActivity* activity) {
+    AndroidInputLowMemory();
 }
 
 void OnWindowFocusChanged(ANativeActivity* activity, int hasFocus) {
@@ -378,8 +401,10 @@ extern "C" __attribute__((visibility("default"))) void ANativeActivity_onCreate(
 
     activity->callbacks->onDestroy = OnDestroy;
     activity->callbacks->onWindowFocusChanged = OnWindowFocusChanged;
+    activity->callbacks->onLowMemory = OnLowMemory;
     activity->callbacks->onNativeWindowCreated = OnNativeWindowCreated;
-    activity->callbacks->onNativeWindowResized = OnNativeWindowResized;
+    activity->callbacks->onNativeWindowResized = nullptr;
+    activity->callbacks->onContentRectChanged = OnContentRectChanged;
     activity->callbacks->onNativeWindowRedrawNeeded = nullptr;
     activity->callbacks->onNativeWindowDestroyed = OnNativeWindowDestroyed;
     activity->callbacks->onInputQueueCreated = OnInputQueueCreated;

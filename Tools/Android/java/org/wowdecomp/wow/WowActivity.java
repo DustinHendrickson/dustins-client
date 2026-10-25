@@ -7,6 +7,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Insets;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -22,6 +23,7 @@ import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 
+import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -214,6 +216,33 @@ public class WowActivity extends NativeActivity {
     public float getDensityDpi() {
         DisplayMetrics metrics = getResources().getDisplayMetrics();
         return metrics.xdpi > 0 ? (metrics.xdpi + metrics.ydpi) / 2 : metrics.densityDpi;
+    }
+
+    /**
+     * Areas, in pixels (left, top, right, bottom each), where a swipe in from the screen's edge goes to the game rather
+     * than being the system's back gesture: the joystick. The system honours 200dp of each edge.
+     */
+    public void setGestureExclusion(int[] rects) {
+        runOnUiThread(() -> {
+            ArrayList<Rect> list = new ArrayList<>();
+
+            for (int i = 0; i + 3 < rects.length; i += 4) {
+                list.add(new Rect(rects[i], rects[i + 1], rects[i + 2], rects[i + 3]));
+            }
+
+            getWindow().getDecorView().setSystemGestureExclusionRects(list);
+        });
+    }
+
+    /** The display's refresh rate now, in hertz (it can change: 60, 90, 120). */
+    public float getRefreshRate() {
+        android.view.Display display = getWindow().getDecorView().getDisplay();
+
+        if (display == null) {
+            display = getWindowManager().getDefaultDisplay();
+        }
+
+        return display != null ? display.getRefreshRate() : 60.0f;
     }
 
     /** The parts of the screen the notch and the home gesture bar cover, in pixels: left, top, right, bottom. */

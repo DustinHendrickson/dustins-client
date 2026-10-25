@@ -16,14 +16,19 @@
 //                                   fractions of the screen, and its physical size
 //   interacted = TouchControls_Interact()      loot, talk to or use the nearest thing in reach (Ui/Mac/PortActions)
 //   TouchControls_TargetNonHostile([reverse])  the next friendly or neutral unit
+//   TouchControls_SetFrameRate(fps)            60, or 30 to save the battery
+//   TouchControls_SetCamera(speed, invert)     the camera drag's speed (1 by default) and up / down swapped
+//   TouchControls_SetAutorunKey(key)           the key a double tap on the joystick presses (autorun's binding)
 //   TouchControls_Log(text)                    a line in Logs/Console.txt
 
 #include "WoW/Source/Ui/Android/TouchControls.h"
 #include <cstdio>
+#include "Engine/Source/Base/Coordinate.h"
 #include <cstring>
 #include "Engine/Source/Event/Types.h"
 #include "Engine/Source/Frame/CSimpleTop.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
+#include "Engine/Source/Gx/CGxDeviceOpenGL/Android/GlAndroidContext.h"
 #include "Engine/Source/Os/Android/AndroidInput.h"
 #include "Engine/Source/Os/Android/AndroidSystem.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
@@ -47,6 +52,80 @@ int32_t PointUnderMouse() {
     }
 
     return AndroidInputPoint_Ui;
+}
+
+// A frame that takes the mouse wheel (registered for it, with an OnMouseWheel script) and is visible.
+bool TakesWheel(CSimpleFrame* frame) {
+    return frame->m_isVisible && (frame->m_enabledEventsBitmask & (1 << SIMPLE_EVENT_MOUSEWHEEL)) && frame->m_onMouseWheel.m_luaRef;
+}
+
+// Whether the mouse wheel would scroll something under the mouse: the frame under it or one it is in (a list's button
+// in its scroll frame), so a window over a list keeps its own drag. Frames that don't take the mouse themselves (the
+// chat's lines) are found as CSimpleTop::OnMouseWheel finds them, when nothing that takes the mouse is there. The 3D
+// world isn't one: the wheel zooms the camera there.
+bool WheelUnderMouse() {
+    CSimpleTop* top = CSimpleTop::GetInstance();
+
+    if (!top) {
+        return false;
+    }
+
+    CSimpleFrame* world = CGWorldFrame::s_currentWorldFrame;
+
+    if (top->m_mouseFocus && top->m_mouseFocus != world) {
+        for (CSimpleFrame* frame = top->m_mouseFocus; frame; frame = frame->m_parent) {
+            if (TakesWheel(frame)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    C2Vector pt;
+    NDCToDDC(top->m_mousePosition.m_x, top->m_mousePosition.m_y, &pt.x, &pt.y);
+
+    for (int32_t strata = FRAME_STRATA_TOOLTIP; strata >= 0; strata--) {
+        CSimpleSortedArray<FRAMEPRIORITY*>& queue = top->m_eventqueue[SIMPLE_EVENT_MOUSEWHEEL][strata];
+
+        for (uint32_t i = 0; i < queue.m_count; i++) {
+            CSimpleFrame* frame = queue.m_array[i] ? queue.m_array[i]->m_frame : nullptr;
+
+            if (frame && frame != world && TakesWheel(frame) && frame->TestHitRect(pt)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// Whether a frame that takes the mouse is at a point (fractions of the screen), as the frame layer would find it under
+// the mouse: the 3D world doesn't count.
+bool UiAtPoint(float x, float y) {
+    CSimpleTop* top = CSimpleTop::GetInstance();
+
+    if (!top) {
+        return false;
+    }
+
+    C2Vector pt;
+    NDCToDDC(x, y, &pt.x, &pt.y);
+    CSimpleFrame* world = CGWorldFrame::s_currentWorldFrame;
+
+    for (int32_t strata = FRAME_STRATA_TOOLTIP; strata >= 0; strata--) {
+        CSimpleSortedArray<FRAMEPRIORITY*>& queue = top->m_eventqueue[SIMPLE_EVENT_MOUSE][strata];
+
+        for (uint32_t i = 0; i < queue.m_count; i++) {
+            CSimpleFrame* frame = queue.m_array[i] ? queue.m_array[i]->m_frame : nullptr;
+
+            if (frame && frame != world && frame->m_isVisible && frame->TestHitRect(pt)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 // A key by its binding name, as the game's key bindings write them.
@@ -224,6 +303,24 @@ int32_t Script_TouchControls_TargetNonHostile(lua_State* L) {
     return 0;
 }
 
+int32_t Script_TouchControls_SetFrameRate(lua_State* L) {
+    AndroidGlSetFrameRate(static_cast<int32_t>(lua_tonumber(L, 1)));
+    return 0;
+}
+
+int32_t Script_TouchControls_SetCamera(lua_State* L) {
+    AndroidInputSetCamera(static_cast<float>(lua_tonumber(L, 1)), lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+int32_t Script_TouchControls_SetAutorunKey(lua_State* L) {
+    const char* key = lua_tostring(L, 1);
+    uint32_t modifiers = 0;
+    int32_t code = key ? ParseKey(key, &modifiers) : KEY_NONE;
+    AndroidInputSetAutorunKey(code, modifiers);
+    return 0;
+}
+
 int32_t Script_TouchControls_Log(lua_State* L) {
     if (const char* text = lua_tostring(L, 1)) {
         fprintf(stderr, "TouchControls: %s\n", text);
@@ -244,6 +341,9 @@ const struct {
     { "TouchControls_GetScreen", &Script_TouchControls_GetScreen },
     { "TouchControls_Interact", &Script_TouchControls_Interact },
     { "TouchControls_TargetNonHostile", &Script_TouchControls_TargetNonHostile },
+    { "TouchControls_SetFrameRate", &Script_TouchControls_SetFrameRate },
+    { "TouchControls_SetCamera", &Script_TouchControls_SetCamera },
+    { "TouchControls_SetAutorunKey", &Script_TouchControls_SetAutorunKey },
     { "TouchControls_Log", &Script_TouchControls_Log },
 };
 
@@ -251,6 +351,8 @@ const struct {
 
 void TouchControlsInitialize() {
     AndroidInputSetPointQuery(PointUnderMouse);
+    AndroidInputSetWheelQuery(WheelUnderMouse);
+    AndroidInputSetUiAtPointQuery(UiAtPoint);
 }
 
 void TouchControlsRegisterScriptFunctions() {

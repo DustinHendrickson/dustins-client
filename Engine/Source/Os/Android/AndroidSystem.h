@@ -39,6 +39,13 @@ void AndroidGetScreenSize(int32_t* width, int32_t* height);
 float AndroidGetDensityDpi();
 void AndroidGetSafeInsets(int32_t* left, int32_t* top, int32_t* right, int32_t* bottom);
 
+// The display's refresh rate now, in hertz (60, 90, 120; it can change while the game runs).
+float AndroidGetRefreshRate();
+
+// Areas of the window, in pixels (left, top, right, bottom each, count of them), where a swipe in from the screen's
+// edge goes to the game instead of being the system's back gesture.
+void AndroidSetGestureExclusion(const int32_t* rects, int32_t count);
+
 // All files access, for the game folder on shared storage, and the page that grants it.
 bool AndroidHasStorageAccess();
 void AndroidRequestStorageAccess();

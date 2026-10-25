@@ -732,8 +732,25 @@ int32_t CSimpleMovieFrame::StartMovie(const char* fileName, int32_t volume) {
     this->OpenAudio(fileName, volume, 0);
     this->OpenCaptions(fileName);
     this->m_isPlaying = 1;
+
+#if defined(WOWDECOMP_PLATFORM_ANDROID)
+    // Taps reach the movie (OnLayerMouseUp), as the movie frames don't take the mouse themselves.
+    this->EnableEvent(SIMPLE_EVENT_MOUSE, -1);
+#endif
+
     return 1;
 }
+
+#if defined(WOWDECOMP_PLATFORM_ANDROID)
+int32_t CSimpleMovieFrame::OnLayerMouseUp(const CMouseEvent& evt, const char* btn) {
+    if (this->m_isPlaying && this->m_onKeyUp.m_luaRef) {
+        this->RunOnKeyUpScript("ESCAPE");
+        return 1;
+    }
+
+    return CSimpleFrame::OnLayerMouseUp(evt, btn);
+}
+#endif
 
 // VERIFY: cd05ebab auto
 // OFFSET: 0x0095EBA0

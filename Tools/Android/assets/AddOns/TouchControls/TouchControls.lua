@@ -22,6 +22,12 @@ local defaults = {
     hidden = false,
     textScale = 1.15,   -- the game's fonts, as a multiple of their own sizes
     displayChosen = false,  -- whether the interface size for this screen has been set (once, then it's the player's)
+    autoLootChosen = false, -- whether auto loot has been turned on (once, likewise)
+    frameRate = 60,     -- 30 saves the battery
+    cameraSpeed = 1,    -- the camera drag's turn per pixel
+    cameraInvert = false,
+    graphicsChosen = false, -- whether the phone's graphics defaults have been set (once, then they're the player's)
+    glowChosen = false, -- whether the full-screen glow has been turned off (once, likewise)
 }
 
 local db
@@ -102,6 +108,9 @@ local function MakeRound(name, parent)
     button.ring:SetTexCoord(RING_LEFT, RING_RIGHT, RING_TOP, RING_BOTTOM)
     button.ring:SetAllPoints()
 
+    -- The textures sized to the ring's opening (SizeRound).
+    button.holeTextures = { button.disc, button.icon, button.pressed }
+
     return button
 end
 
@@ -111,7 +120,7 @@ local function SizeRound(button, size)
 
     local hole = size * RING_HOLE
 
-    for _, texture in ipairs({ button.disc, button.icon, button.pressed }) do
+    for _, texture in ipairs(button.holeTextures) do
         texture:ClearAllPoints()
         texture:SetPoint("CENTER")
         texture:SetWidth(hole)
@@ -186,17 +195,25 @@ end
 -- Where the base rests, as fractions of the screen (Layout).
 local joystickRestX, joystickRestY = 0.14, 0.24
 
+-- Where it was last placed, so a resting or still joystick isn't laid out again every frame.
+local placedX, placedY, placedPushX, placedPushY, placedHeight
+
 joystickArea:SetScript("OnUpdate", function(self)
     local held, x, y, pushX, pushY = TouchControls_GetJoystick()
 
-    -- Faded through the frame: a texture's own alpha is its vertex color's, which gives the discs their shade.
-    if held then
-        PlaceJoystick(x, y, pushX, pushY)
-        self:SetAlpha(1)
-    else
-        PlaceJoystick(joystickRestX, joystickRestY, 0, 0)
-        self:SetAlpha(0.55)
+    if not held then
+        x, y, pushX, pushY = joystickRestX, joystickRestY, 0, 0
     end
+
+    local height = ScreenHeight()
+
+    if x ~= placedX or y ~= placedY or pushX ~= placedPushX or pushY ~= placedPushY or height ~= placedHeight then
+        placedX, placedY, placedPushX, placedPushY, placedHeight = x, y, pushX, pushY, height
+        PlaceJoystick(x, y, pushX, pushY)
+    end
+
+    -- Faded through the frame: a texture's own alpha is its vertex color's, which gives the discs their shade.
+    self:SetAlpha(held and 1 or 0.55)
 end)
 
 Register("joystick", joystickArea, "JOYSTICK")
@@ -264,7 +281,8 @@ end
 
 -- The button keys index would press now: a vehicle's, a stance's or possession's bar, or the main bar.
 local function WheelButton(index)
-    if VehicleMenuBar and VehicleMenuBar:IsShown() then
+    -- ActionButtonDown's choice: the vehicle has the first six keys, the rest go on to the bars.
+    if VehicleMenuBar and VehicleMenuBar:IsShown() and index <= (VEHICLE_MAX_ACTIONBUTTONS or 6) then
         return _G["VehicleMenuBarActionButton" .. index]
     end
 
@@ -344,34 +362,51 @@ end
 -- Controls under the game's windows: a bag, a dialog or the map over a control takes the fingers there instead.
 
 local covering = { "GameMenuFrame", "TouchControlsMenu", "LootFrame", "WorldMapFrame", "InterfaceOptionsFrame",
-    "VideoOptionsFrame", "AudioOptionsFrame", "KeyBindingFrame", "MacroFrame", "ChatConfigFrame", "HelpFrame",
-    "StaticPopup1", "StaticPopup2", "StaticPopup3", "StaticPopup4", "ItemRefTooltip", "TradeFrame", "MerchantFrame",
-    "GossipFrame", "QuestFrame", "TaxiFrame", "BankFrame", "MailFrame", "AuctionFrame", "ReadyCheckFrame" }
+    "VideoOptionsFrame", "AudioOptionsFrame", "KeyBindingFrame", "MacroFrame", "MacroPopupFrame", "ChatConfigFrame",
+    "HelpFrame", "StaticPopup1", "StaticPopup2", "StaticPopup3", "StaticPopup4", "ItemRefTooltip", "TradeFrame",
+    "MerchantFrame", "GossipFrame", "QuestFrame", "TaxiFrame", "BankFrame", "MailFrame", "OpenMailFrame",
+    "AuctionFrame", "ReadyCheckFrame", "DropDownList1", "DropDownList2", "StackSplitFrame", "ColorPickerFrame",
+    "GearManagerDialog", "LFDDungeonReadyDialog", "LFDDungeonReadyPopup", "LFDRoleCheckPopup", "GroupLootFrame1",
+    "GroupLootFrame2", "GroupLootFrame3", "GroupLootFrame4" }
+local panelSides = { "left", "center", "right", "doublewide", "fullscreen" }
 
-local function Over(frame, left, bottom, right, top)
-    if not frame or not frame:IsVisible() then
-        return false
+-- The open windows' areas, gathered once a sync (four numbers each).
+local openAreas = {}
+
+local function GatherOpen()
+    local count = 0
+
+    local function Add(frame)
+        if frame and frame:IsVisible() then
+            local left, bottom, right, top = Fractions(frame)
+
+            if left then
+                openAreas[count + 1], openAreas[count + 2], openAreas[count + 3], openAreas[count + 4] = left, bottom, right, top
+                count = count + 4
+            end
+        end
     end
 
-    local l, b, r, t = Fractions(frame)
-    return l and l < right and r > left and b < top and t > bottom
-end
-
-local function Covered(left, bottom, right, top)
     for _, name in ipairs(covering) do
-        if Over(_G[name], left, bottom, right, top) then
-            return true
-        end
+        Add(_G[name])
     end
 
     for index = 1, NUM_CONTAINER_FRAMES or 13 do
-        if Over(_G["ContainerFrame" .. index], left, bottom, right, top) then
-            return true
-        end
+        Add(_G["ContainerFrame" .. index])
     end
 
-    for _, side in ipairs({ "left", "center", "right", "doublewide", "fullscreen" }) do
-        if Over(GetUIPanel(side), left, bottom, right, top) then
+    for _, side in ipairs(panelSides) do
+        Add(GetUIPanel(side))
+    end
+
+    for index = count + 1, #openAreas do
+        openAreas[index] = nil
+    end
+end
+
+local function Covered(left, bottom, right, top)
+    for index = 1, #openAreas, 4 do
+        if openAreas[index] < right and openAreas[index + 2] > left and openAreas[index + 1] < top and openAreas[index + 3] > bottom then
             return true
         end
     end
@@ -381,6 +416,8 @@ end
 
 -- Sends every visible, uncovered control's area to the input layer, and drops the others.
 local function SyncControls()
+    GatherOpen()
+
     for name, control in pairs(controls) do
         local frame = control.frame
         local sent = false
@@ -567,13 +604,94 @@ local chatSlider = MakeSlider("TouchControlsMenuChatSize", "Chat text", 10, 24, 
         SetChatSize(floor(value + 0.5))
     end, true)
 
-local displaySliders = { uiScaleSlider, textSlider, chatSlider }
+-- Render resolution: the screen's shape at the sizes the device offers, the largest (the screen's own) first. Fewer
+-- pixels is the most a phone saves, and on a small screen it shows little.
+local function RenderModes()
+    local modes = {}
+
+    for _, text in ipairs({ GetScreenResolutions() }) do
+        local width, height = strmatch(text, "(%d+)x(%d+)")
+
+        if width then
+            tinsert(modes, { text = text, height = tonumber(height) })
+        end
+    end
+
+    sort(modes, function(a, b) return a.height > b.height end)
+    return modes
+end
+
+local renderModes = RenderModes()
+local pendingRenderMode, pendingRenderAt     -- a render resolution to switch to a moment from now
+
+-- The slider runs from the smallest (1) to the screen's own (the last).
+local function RenderMode(value)
+    return renderModes[#renderModes - floor(value + 0.5) + 1]
+end
+
+local function SetRenderMode(mode)
+    if mode and mode.text ~= GetCVar("gxResolution") then
+        SetCVar("gxResolution", mode.text)
+        RestartGx()
+    end
+end
+
+local renderSlider = MakeSlider("TouchControlsMenuRender", "Render resolution", 1, max(#renderModes, 1), 1,
+    function(value)
+        local mode = RenderMode(value)
+        return mode and format("%d%% (%s)", mode.height / renderModes[1].height * 100 + 0.5, mode.text) or "-"
+    end,
+    function(value)
+        SetRenderMode(RenderMode(value))
+    end)
+
+local cameraSlider = MakeSlider("TouchControlsMenuCamera", "Camera speed", 0.3, 3, 0.1,
+    function(value) return format("%d%%", value * 100 + 0.5) end,
+    function(value)
+        db.cameraSpeed = floor(value * 10 + 0.5) / 10
+        TouchControls_SetCamera(db.cameraSpeed, db.cameraInvert)
+    end, true)
+
+local displaySliders = { uiScaleSlider, textSlider, chatSlider, renderSlider, cameraSlider }
+
+-- Battery saver: the game held to 30 frames a second.
+local batteryCheck = CreateFrame("CheckButton", "TouchControlsMenuBattery", displayHolder, "UICheckButtonTemplate")
+TouchControlsMenuBatteryText:SetText("Battery saver (30 fps)")
+batteryCheck:SetScript("OnClick", function(self)
+    db.frameRate = self:GetChecked() and 30 or 60
+    TouchControls_SetFrameRate(db.frameRate)
+end)
+
+-- The full-screen glow: its copies of the frame cost a phone's GPU about two thirds of its frame rate at 1080 lines.
+local glowCheck = CreateFrame("CheckButton", "TouchControlsMenuGlow", displayHolder, "UICheckButtonTemplate")
+TouchControlsMenuGlowText:SetText("Glow (slower)")
+glowCheck:SetScript("OnClick", function(self)
+    SetCVar("ffxGlow", self:GetChecked() and "1" or "0")
+end)
+
+local invertCheck = CreateFrame("CheckButton", "TouchControlsMenuInvert", displayHolder, "UICheckButtonTemplate")
+TouchControlsMenuInvertText:SetText("Invert camera")
+invertCheck:SetScript("OnClick", function(self)
+    db.cameraInvert = self:GetChecked() and true or false
+    TouchControls_SetCamera(db.cameraSpeed, db.cameraInvert)
+end)
 
 local function UpdateSliders()
     updatingSliders = true
     uiScaleSlider:SetValue(tonumber(GetCVar("uiScale")) or 1)
     textSlider:SetValue(db.textScale)
     chatSlider:SetValue(select(2, ChatFrame1:GetFont()) or 14)
+
+    for index, mode in ipairs(renderModes) do
+        if mode.text == GetCVar("gxResolution") then
+            renderSlider:SetValue(#renderModes - index + 1)
+        end
+    end
+
+    batteryCheck:SetChecked(db.frameRate == 30)
+    invertCheck:SetChecked(db.cameraInvert)
+    glowCheck:SetChecked(GetCVar("ffxGlow") == "1")
+    cameraSlider:SetValue(db.cameraSpeed)
     updatingSliders = false
 end
 
@@ -666,12 +784,21 @@ local function FillMenu()
     -- The display settings: three sliders, each under its label.
     local sliderRow = 44
     displayHolder:SetWidth(300)
-    displayHolder:SetHeight(sliderRow * #displaySliders)
+    displayHolder:SetHeight(sliderRow * #displaySliders + 60)
 
     for index, slider in ipairs(displaySliders) do
         slider:ClearAllPoints()
         slider:SetPoint("TOP", displayHolder, "TOP", 0, -sliderRow * (index - 1) - 20)
     end
+
+    -- Two columns of check boxes under the sliders: the battery and the glow, the camera's invert.
+    local checksTop = -sliderRow * #displaySliders - 4
+    batteryCheck:ClearAllPoints()
+    batteryCheck:SetPoint("TOPLEFT", displayHolder, "TOPLEFT", 0, checksTop)
+    glowCheck:ClearAllPoints()
+    glowCheck:SetPoint("TOPLEFT", displayHolder, "TOPLEFT", 0, checksTop - 28)
+    invertCheck:ClearAllPoints()
+    invertCheck:SetPoint("TOPLEFT", displayHolder, "TOP", 10, checksTop)
 
     local scale = MenuScale()
     local displayScale = scale * 0.8
@@ -797,12 +924,6 @@ local function PlaceTracker()
     WatchFrame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", right, ScreenHeight() * 0.6)
 end
 
-hooksecurefunc("UIParent_ManageFramePositions", function()
-    if db then
-        PlaceTracker()
-    end
-end)
-
 ------------------------------------------------------------------------------------------------------------------------
 -- The layout.
 
@@ -813,11 +934,22 @@ local function PlaceChat()
 
     -- Above the joystick's area and under the unit frames, whatever the chat windows were saved with (the game restores
     -- those after the add-ons load, so this is done again when it does).
+    -- Clear of a camera hole on that side (its side buttons hang off its left edge).
+    local _, insetLeft = TouchControls_GetScreen()
     ChatFrame1:ClearAllPoints()
-    ChatFrame1:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", ScreenWidth() * 0.02, ScreenHeight() * 0.5)
+    ChatFrame1:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", ScreenWidth() * (0.02 + (insetLeft or 0)), ScreenHeight() * 0.5)
     ChatFrame1:SetWidth(ScreenWidth() * 0.3)
     ChatFrame1:SetHeight(ScreenHeight() * 0.22)
 end
+
+-- The game places the tracker and a chat window that was never dragged on every pass of its frame manager (stances,
+-- pets, bags, vehicles): they go back where the touch layout has them after it.
+hooksecurefunc("UIParent_ManageFramePositions", function()
+    if db then
+        PlaceTracker()
+        PlaceChat()
+    end
+end)
 
 local function Layout()
     local width = ScreenWidth()
@@ -872,14 +1004,23 @@ local function Layout()
 
     PlaceChat()
 
+    -- The menu's buttons aren't protected: it's ready even after a login in combat.
+    if wheel then
+        FillMenu()
+    end
+
     if InCombatLockdown() then
         return
     end
 
+    -- The form, stealth and possession bar stays on the main bar, below the screen's edge and see-through: its own
+    -- OnUpdate shows and hides it, which a hidden parent would stop, leaving keys 1 to = on it for good.
+    if BonusActionBarFrame then
+        BonusActionBarFrame:SetAlpha(wheel and 0 or 1)
+    end
+
     if wheel then
-        FillMenu()
         Stash(MainMenuBarArtFrame)
-        Stash(BonusActionBarFrame)
         Stash(MultiBarBottomLeft)
         Stash(MultiBarBottomRight)
         Stash(MultiBarRight)
@@ -892,7 +1033,7 @@ local function Layout()
     end
 
     PlaceGameBars()
-    UIParent_ManageFramePositions()
+    PlaceTracker()
 end
 
 -- The page: the bar's, shown on the page button, which pages on (ACTIONPAGE1 to 6, SHIFT-1 to SHIFT-6 by default) to
@@ -928,6 +1069,11 @@ local firstPageUntil
 local function FirstUsedPage()
     if InCombatLockdown() or not ChangeActionBarPage then
         return false
+    end
+
+    -- In a stance or form, keys 1 to = are its bar's, which follow page 1 only.
+    if GetBonusBarOffset() > 0 then
+        return true
     end
 
     local function Used(page)
@@ -989,19 +1135,31 @@ function TouchControls_Toggle()
     ApplyHidden()
 end
 
--- The add-on's actions get their keys once (the player can move them in Key Bindings).
-local function EnsureBindings()
-    local changed = false
+-- The add-on's actions get keys for the session where the player hasn't given them any (Key Bindings can move them).
+-- Never saved: the bindings come from the server a moment after login, and a set saved before they arrive holds
+-- nothing but these, which unbinds every default key (movement, Enter, the mouse on the world) for the account.
+local ensuringBindings = false
 
-    for key, action in pairs({ F13 = "TOUCHCONTROLS_INTERACT", F14 = "TOUCHCONTROLS_TARGETNONHOSTILE", F15 = "TOUCHCONTROLS_TOGGLE", F16 = "TOUCHCONTROLS_MENU" }) do
-        if not GetBindingKey(action) and (GetBindingAction(key) or "") == "" then
-            SetBinding(key, action)
-            changed = true
-        end
+local function EnsureBindings()
+    -- SetBinding signals UPDATE_BINDINGS, which comes back here.
+    if ensuringBindings then
+        return
     end
 
-    if changed then
-        SaveBindings(GetCurrentBindingSet())
+    -- Account (1) or character (2) once the bindings have loaded, and out of combat; until then UPDATE_BINDINGS or
+    -- PLAYER_REGEN_ENABLED brings this back.
+    local set = GetCurrentBindingSet()
+
+    if (set == 1 or set == 2) and not InCombatLockdown() then
+        ensuringBindings = true
+
+        for key, action in pairs({ F13 = "TOUCHCONTROLS_INTERACT", F14 = "TOUCHCONTROLS_TARGETNONHOSTILE", F15 = "TOUCHCONTROLS_TOGGLE", F16 = "TOUCHCONTROLS_MENU" }) do
+            if not GetBindingKey(action) and (GetBindingAction(key) or "") == "" then
+                SetBinding(key, action)
+            end
+        end
+
+        ensuringBindings = false
     end
 
     -- The controls press whatever keys these actions are bound to now.
@@ -1011,6 +1169,9 @@ local function EnsureBindings()
     controls.menu.key = GetBindingKey("TOUCHCONTROLS_MENU")
     controls.targetEnemy.key = GetBindingKey("TARGETNEARESTENEMY") or "TAB"
     controls.jump.key = GetBindingKey("JUMP") or "SPACE"
+
+    -- A double tap on the joystick presses autorun's key (NUMLOCK by default).
+    TouchControls_SetAutorunKey(GetBindingKey("TOGGLEAUTORUN"))
 
     for index = 1, NUM_WHEEL do
         controls["action" .. index].key = GetBindingKey("ACTIONBUTTON" .. index)
@@ -1043,6 +1204,8 @@ end)
 -- a second (frames move, windows open over them).
 local elapsedSinceSlots = 0
 local elapsedSinceSync = 0
+local elapsedSinceInsets = 0
+local lastInsetLeft
 
 addon:SetScript("OnUpdate", function(self, elapsed)
     if not db then
@@ -1069,6 +1232,10 @@ addon:SetScript("OnUpdate", function(self, elapsed)
         for index, slot in ipairs(slots) do
             UpdateSlot(slot, index)
         end
+
+        -- A form's, possession's or vehicle's bar takes keys 1 to = whatever the page: the page button rests.
+        local otherBar = (VehicleMenuBar and VehicleMenuBar:IsShown()) or (BonusActionBarFrame and BonusActionBarFrame:IsShown())
+        buttons.page:SetAlpha(otherBar and 0.35 or 1)
     end
 
     elapsedSinceSync = elapsedSinceSync + elapsed
@@ -1081,14 +1248,46 @@ addon:SetScript("OnUpdate", function(self, elapsed)
             firstPageUntil = nil
         end
 
+        -- Turning the phone end over end moves a camera hole to the other side, with no event for it.
+        elapsedSinceInsets = elapsedSinceInsets + 0.25
+
+        if elapsedSinceInsets >= 1 then
+            elapsedSinceInsets = 0
+            local _, insetLeft = TouchControls_GetScreen()
+
+            if insetLeft ~= lastInsetLeft then
+                lastInsetLeft = insetLeft
+                PlaceChat()
+            end
+        end
+
+        -- Out of a loading screen or a vehicle the main bar slides back to its own place; the touch one is restored once
+        -- it has finished.
+        if db.style == "wheel" and not InCombatLockdown() and MainMenuBar:IsShown() and not MainMenuBar.busy and select(5, MainMenuBar:GetPoint(1)) ~= -40 then
+            PlaceGameBars()
+        end
+
+        if pendingRenderAt and GetTime() > pendingRenderAt and not InCombatLockdown() then
+            SetRenderMode(pendingRenderMode)
+            pendingRenderMode, pendingRenderAt = nil, nil
+        end
+
         if refreshAt and GetTime() > refreshAt then
             refreshAt = nil
             Refresh()
-
-            if WatchFrame_Update then
-                WatchFrame_Update(WatchFrame)
-            end
         end
+    end
+end)
+
+-- UIParent hides for the full-screen world map, cinematics and Alt-Z, and this frame with it: its controls go too, so
+-- taps reach what is showing, and come back with it.
+addon:SetScript("OnHide", function()
+    TouchControls_ClearControls()
+end)
+
+addon:SetScript("OnShow", function()
+    if db then
+        SyncControls()
     end
 end)
 
@@ -1119,6 +1318,8 @@ addon:SetScript("OnEvent", function(self, event, name)
         end
 
         WidenGameSlider()
+        TouchControls_SetFrameRate(db.frameRate)
+        TouchControls_SetCamera(db.cameraSpeed, db.cameraInvert)
 
         if db.textScale ~= 1 then
             ApplyTextScale(db.textScale)
@@ -1136,6 +1337,42 @@ addon:SetScript("OnEvent", function(self, event, name)
     end
 
     -- The first time on this screen: an interface size that fits it, and chat text to match.
+    -- Looting a body takes everything with one tap, as the Switch port does; once (Interface options can turn it off).
+    if event == "PLAYER_ENTERING_WORLD" and not db.autoLootChosen then
+        db.autoLootChosen = true
+        SetCVar("autoLootDefault", "1")
+    end
+
+    -- The first time: a phone's graphics. The render resolution at most 1080 high (a sharper screen shows little more
+    -- for the battery and heat), and lighter weather and particles; the view distance and ground clutter are already
+    -- modest by default.
+    if event == "PLAYER_ENTERING_WORLD" and not db.graphicsChosen and not InCombatLockdown() then
+        db.graphicsChosen = true
+
+        if tonumber(GetCVar("weatherDensity")) == 2 then
+            SetCVar("weatherDensity", "1")
+        end
+
+        if tonumber(GetCVar("particleDensity")) == 1 then
+            SetCVar("particleDensity", "0.8")
+        end
+
+        -- A moment after the world is in: restarting the device during the loading is asking for trouble.
+        for _, mode in ipairs(renderModes) do
+            if mode.height <= 1080 then
+                pendingRenderMode, pendingRenderAt = mode, GetTime() + 2
+                break
+            end
+        end
+    end
+
+    -- The full-screen glow off, once: on a phone's GPU it takes most of the frame rate (22 frames a second against 63
+    -- at 1080 lines on a Pixel 7 Pro); the menu turns it back on.
+    if event == "PLAYER_ENTERING_WORLD" and not db.glowChosen then
+        db.glowChosen = true
+        SetCVar("ffxGlow", "0")
+    end
+
     if event == "PLAYER_ENTERING_WORLD" and not db.displayChosen then
         db.displayChosen = true
         SetUiScale(RecommendedScale())
@@ -1159,6 +1396,13 @@ addon:SetScript("OnEvent", function(self, event, name)
         Refresh()
     end
 end)
+
+-- A tap skips an in-game cinematic, as Escape does (movies are skipped by the engine: CSimpleMovieFrame).
+if CinematicFrame then
+    CinematicFrame:HookScript("OnMouseUp", function()
+        StopCinematic()
+    end)
+end
 
 SLASH_TOUCHCONTROLS1 = "/touch"
 

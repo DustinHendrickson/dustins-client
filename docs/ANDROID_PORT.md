@@ -222,6 +222,41 @@ face buttons are action keys), with Android's button names in the hints. Touch a
     finger lifts; text 100% to 150%; chat 10 to 24), and the game's own UI Scale slider reaches 150% too. With the
     larger interface the quest tracker sits left of the minimap, the chat above the joystick, and the experience bar
     across the middle half of the screen.
-  - `/touch debug` logs the controls' areas and each bar page's used slots to `Logs/Console.txt`.
+  - A drag up or down over anything that takes the mouse wheel (a list, the chat, the minimap) scrolls it; other
+    drags hold the button, for sliders and dragging items. A tap skips a movie (the engine's `CSimpleMovieFrame`) or
+    an in-game cinematic (the add-on).
+  - The joystick's area is excluded from the system's back gesture, and the chat keeps clear of a camera hole on the
+    screen's edge (the window's safe insets, checked again when the phone is turned end over end).
+  - The add-on gives its actions keys F13 to F16 for the session only and never saves bindings: they come from the
+    server a moment after login, and a set saved before they arrive unbinds every default key.
+  - Leaving the app (or losing the focus to a system dialog) lets go of every finger, key and button. Keys count
+    their holders, so two controls on one key or modifier don't release each other. A second finger landing while
+    the first is still being placed waits for it (a pinch's two fingers land within a frame or two). A flick that
+    lifts before it is placed clicks nothing; a camera drag that ends before the turn starts lets go off the screen.
+  - The add-on: a battery saver in the menu holds the game to 30 frames a second (paced at the swap, and told to the
+    display so 90 and 120 Hz screens run at the game's rate); auto loot is turned on once; the form and stealth bar
+    stays on the main bar, see-through, so it still hides itself; the controls go while UIParent is hidden (the
+    world map, cinematics); a window over a control takes its fingers (menus, popups, loot rolls included).
+  - Rendering for phones: the menu's render resolution slider steps through the screen-shaped modes (gxResolution and
+    a device restart, applied when the finger lifts); the first time, the render resolution goes to at most 1080 high
+    and weather and particle density down a step. Each frame's work is reported to Android's performance hints
+    (ADPF, Android 13 on) against the frame rate's time; on low memory the textures kept for reuse are let go.
+  - More touch: a tap on the UI by a second finger while the first turns the camera goes through (mouselook lets go
+    for the click and takes the mouse back); a double tap on the joystick presses autorun's key; the menu has a
+    camera speed slider and an invert option.
+  - Tested on a Pixel 7 Pro (Tensor G2, Mali-G710, Android 17): 50 to 59 frames a second at the full 3120x1440 in
+    Goldshire. In Stormwind at 2340x1080: 22 frames a second with the full-screen glow on, 63 with it off (the same
+    at 1560x720 with it on), the game thread at about a third of a core and the GPU the limit. The glow copies the
+    frame and renders its blur off screen, which on a tiled GPU stores and reloads the whole frame; it is off by
+    default on phones (the add-on, once) with a switch in the menu, until it is reworked for tiled GPUs.
+  - Memory there: graphics 290 to 620 MB (textures decoded from DXT to RGBA, which the Mali GPU needs), the game's
+    heap about 340 MB, about 0.7 to 1 GB in all.
+  - Going to the background saves the settings (Config.wtf) and the add-ons' saved variables: Android ends a game
+    swiped away from the recent apps with no logout, which is the only other time they are written.
+  - The display may run at 120 Hz whatever the game asks: the swap waits for as many refreshes as make a frame at
+    the game's rate (two for 60, four for the battery saver's 30), from the display's refresh rate asked every two
+    seconds.
+  - `/touch debug` logs the controls' areas and each bar page's used slots to `Logs/Console.txt`; the property
+    `debug.wow.input` at 1 logs every touch, how it is routed and what goes to the game (`adb logcat -s WoWInput`).
   Not yet tested: pinch (the emulator does it with Ctrl and a drag), a hold on the world, two fingers at once, and
   interact and the targeting buttons next to NPCs and enemies.

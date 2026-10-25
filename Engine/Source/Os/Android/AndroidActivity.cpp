@@ -159,6 +159,33 @@ bool AndroidIsFinishing() {
     return s_finishing;
 }
 
+float AndroidGetRefreshRate() {
+    JNIEnv* env = Env();
+    jmethodID method = env ? Method(env, "getRefreshRate", "()F") : nullptr;
+
+    if (!method) {
+        return 60.0f;
+    }
+
+    jfloat rate = env->CallFloatMethod(s_activity->clazz, method);
+    return Failed(env) || rate <= 0.0f ? 60.0f : rate;
+}
+
+void AndroidSetGestureExclusion(const int32_t* rects, int32_t count) {
+    JNIEnv* env = Env();
+    jmethodID method = env ? Method(env, "setGestureExclusion", "([I)V") : nullptr;
+
+    if (!method) {
+        return;
+    }
+
+    jintArray array = env->NewIntArray(count * 4);
+    env->SetIntArrayRegion(array, 0, count * 4, reinterpret_cast<const jint*>(rects));
+    env->CallVoidMethod(s_activity->clazz, method, array);
+    env->DeleteLocalRef(array);
+    Failed(env);
+}
+
 bool AndroidOpenURL(const char* url) {
     JNIEnv* env = Env();
     jmethodID method = env ? Method(env, "openUrl", "(Ljava/lang/String;)Z") : nullptr;

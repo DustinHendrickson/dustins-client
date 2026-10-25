@@ -2,13 +2,13 @@
 	<Binding name="TOUCHCONTROLS_INTERACT" header="TOUCHCONTROLS">
 		TouchControls_Interact()
 	</Binding>
-	<Binding name="TOUCHCONTROLS_TARGETNONHOSTILE" header="TOUCHCONTROLS">
+	<Binding name="TOUCHCONTROLS_TARGETNONHOSTILE">
 		TouchControls_TargetNonHostile()
 	</Binding>
-	<Binding name="TOUCHCONTROLS_TOGGLE" header="TOUCHCONTROLS">
+	<Binding name="TOUCHCONTROLS_TOGGLE">
 		TouchControls_Toggle()
 	</Binding>
-	<Binding name="TOUCHCONTROLS_MENU" header="TOUCHCONTROLS">
+	<Binding name="TOUCHCONTROLS_MENU">
 		TouchControls_ToggleMenu()
 	</Binding>
 </Bindings>

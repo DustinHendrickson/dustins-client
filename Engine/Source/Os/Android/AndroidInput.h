@@ -28,6 +28,29 @@ enum AndroidInputPoint {
 
 void AndroidInputSetPointQuery(int32_t (*query)());
 
+// Whether the frame under the mouse takes the mouse wheel (a list, the chat): a finger dragging up or down there
+// scrolls it.
+void AndroidInputSetWheelQuery(bool (*query)());
+
+// Whether a UI frame that takes the mouse is at a point (fractions of the screen from its bottom left), whatever the
+// mouse is doing: a second finger there taps it while the first turns the camera.
+void AndroidInputSetUiAtPointQuery(bool (*query)(float x, float y));
+
+// Camera drag: relative movement per pixel of finger movement (1 by default), and up and down swapped.
+void AndroidInputSetCamera(float speed, bool invert);
+
+// The key (and modifiers) a double tap on the joystick presses: autorun's binding. KEY_NONE for none.
+void AndroidInputSetAutorunKey(int32_t key, uint32_t modifiers);
+
+// The app went to the background, where Android may end it without warning: the handler runs on the game thread
+// at its next input poll, to save what a logout would.
+void AndroidInputSetBackgroundHandler(void (*handler)());
+
+// The system is short of memory (onLowMemory, any thread): the handler runs on the game thread at its next input poll,
+// to let go of what can be loaded again.
+void AndroidInputLowMemory();
+void AndroidInputSetLowMemoryHandler(void (*handler)());
+
 // Overlay controls (the TouchControls add-on's, through WoW/Source/Ui/Android/TouchControls.cpp): screen areas a finger
 // landing in belongs to, before the UI and the world. Areas are fractions of the screen from its bottom left, as the
 // game's UI measures. A key control holds its key (with Shift, Ctrl or Alt) down while the finger is; the joystick

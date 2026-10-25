@@ -104,6 +104,10 @@ class CSimpleMovieFrame : public CSimpleFrame {
     virtual const char* GetObjectTypeName();
     virtual void GetScriptTime(lua_State* L, double* time, uint32_t* count, int32_t recurse);
     virtual void OnFrameRender(CRenderBatch* batch, uint32_t layer);
+#if defined(WOWDECOMP_PLATFORM_ANDROID)
+    // A phone has no Escape key to hand: a tap on a playing movie does what Escape would.
+    virtual int32_t OnLayerMouseUp(const CMouseEvent& evt, const char* btn);
+#endif
 
     CSimpleMovieFrame(CSimpleFrame* parent);
     void CloseAudio();

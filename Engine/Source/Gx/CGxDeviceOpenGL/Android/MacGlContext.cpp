@@ -8,7 +8,10 @@
 #include <android/native_window.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+#include <dlfcn.h>
+#include <time.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include "Engine/Source/Gx/CGxDeviceOpenGL/Android/GlAndroid.h"
@@ -31,6 +34,17 @@ struct AndroidGlContext {
     void* m_view;
     int32_t m_interval;
 };
+
+// The frame rate (AndroidGlSetFrameRate), held whatever the display's refresh: the display is asked for it, the swap
+// waits for as many of the display's refreshes as make one frame (two at 120 Hz for 60), and where they don't divide
+// (90 Hz) the swap is also held back until the frame's time is nearly up.
+int32_t s_frameRate = 60;
+ANativeWindow* s_frameRateWindow;
+int32_t s_frameRateSent;
+uint64_t s_lastSwapNs;
+float s_refreshRate;
+uint64_t s_refreshCheckedNs;
+int32_t s_swapInterval;
 
 AndroidGlContext* s_current;
 
@@ -64,6 +78,104 @@ void CreateSurface(AndroidGlContext* context) {
 
     eglMakeCurrent(context->m_display, context->m_surface, context->m_surface, context->m_context);
     eglSwapInterval(context->m_display, context->m_interval);
+    s_swapInterval = context->m_interval;
+}
+
+uint64_t MonotonicNs() {
+    timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return static_cast<uint64_t>(now.tv_sec) * 1000000000ull + static_cast<uint64_t>(now.tv_nsec);
+}
+
+// Android's performance hints (ADPF, Android 13 on, so looked up rather than linked): each frame's work against the
+// frame's time, so the system sizes the CPU's clocks to the game rather than guessing (cooler, steadier).
+struct PerformanceHints {
+    void* (*getManager)();
+    void* (*createSession)(void* manager, const int32_t* threads, size_t count, int64_t targetNs);
+    int (*updateTarget)(void* session, int64_t targetNs);
+    int (*reportActual)(void* session, int64_t actualNs);
+    void* session;
+    int32_t target;
+    bool tried;
+};
+
+PerformanceHints s_hints;
+
+void ReportFrameWork(uint64_t workNs) {
+    PerformanceHints& hints = s_hints;
+
+    if (!hints.tried) {
+        hints.tried = true;
+        void* library = dlopen("libandroid.so", RTLD_NOW);
+
+        if (library) {
+            hints.getManager = reinterpret_cast<void* (*)()>(dlsym(library, "APerformanceHint_getManager"));
+            hints.createSession = reinterpret_cast<void* (*)(void*, const int32_t*, size_t, int64_t)>(dlsym(library, "APerformanceHint_createSession"));
+            hints.updateTarget = reinterpret_cast<int (*)(void*, int64_t)>(dlsym(library, "APerformanceHint_updateTargetWorkDuration"));
+            hints.reportActual = reinterpret_cast<int (*)(void*, int64_t)>(dlsym(library, "APerformanceHint_reportActualWorkDuration"));
+        }
+
+        if (hints.getManager && hints.createSession && hints.updateTarget && hints.reportActual) {
+            void* manager = hints.getManager();
+            int32_t thread = gettid();
+            hints.target = s_frameRate;
+            hints.session = manager ? hints.createSession(manager, &thread, 1, 1000000000ll / s_frameRate) : nullptr;
+        }
+    }
+
+    if (!hints.session || !workNs) {
+        return;
+    }
+
+    if (hints.target != s_frameRate) {
+        hints.target = s_frameRate;
+        hints.updateTarget(hints.session, 1000000000ll / s_frameRate);
+    }
+
+    hints.reportActual(hints.session, static_cast<int64_t>(workNs));
+}
+
+void PaceFrame(AndroidGlContext* context) {
+    // The frame's work: from the last swap's return to now, before any wait for the frame's time.
+    if (s_lastSwapNs) {
+        ReportFrameWork(MonotonicNs() - s_lastSwapNs);
+    }
+
+    if (context->m_window && (context->m_window != s_frameRateWindow || s_frameRate != s_frameRateSent)) {
+        ANativeWindow_setFrameRate(context->m_window, static_cast<float>(s_frameRate), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+        s_frameRateWindow = context->m_window;
+        s_frameRateSent = s_frameRate;
+    }
+
+    // The display's refresh, asked again every couple of seconds (the system changes it).
+    uint64_t nowNs = MonotonicNs();
+
+    if (!s_refreshRate || nowNs - s_refreshCheckedNs > 2000000000ull) {
+        s_refreshCheckedNs = nowNs;
+        s_refreshRate = AndroidGetRefreshRate();
+    }
+
+    // With the vertical sync on (the device's interval), as many refreshes a frame as fit in the frame's time.
+    int32_t refreshes = static_cast<int32_t>(s_refreshRate / static_cast<float>(s_frameRate) + 0.1f);
+    int32_t interval = context->m_interval > 0 ? std::max(1, refreshes) * context->m_interval : 0;
+
+    if (interval != s_swapInterval) {
+        s_swapInterval = interval;
+        eglSwapInterval(context->m_display, interval);
+    }
+
+    // Faster than the frame rate even so (no vertical sync, or a refresh that doesn't divide): the swap waits for the
+    // frame's time, less a couple of milliseconds so it still makes its vertical blank.
+    float shown = interval > 0 ? s_refreshRate / static_cast<float>(interval) : 1000.0f;
+
+    if (shown > static_cast<float>(s_frameRate) * 1.05f && s_lastSwapNs) {
+        uint64_t due = s_lastSwapNs + 1000000000ull / static_cast<uint64_t>(s_frameRate) - 2000000ull;
+        uint64_t now = MonotonicNs();
+
+        if (now < due) {
+            usleep(static_cast<useconds_t>((due - now) / 1000));
+        }
+    }
 }
 
 // Follows the activity's window: a new one gets a surface, a gone one loses it. True while there is one to draw to.
@@ -205,6 +317,9 @@ void MacGlSetSwapInterval(void* handle, int32_t interval) {
     if (context) {
         context->m_interval = interval;
         eglSwapInterval(context->m_display, interval);
+
+        // The next frame works out its own from this one (PaceFrame).
+        s_swapInterval = -1;
     }
 }
 
@@ -249,6 +364,10 @@ void* AndroidGlCurrentContext() {
     return s_current;
 }
 
+void AndroidGlSetFrameRate(int32_t fps) {
+    s_frameRate = fps >= 60 || fps <= 0 ? 60 : fps;
+}
+
 void AndroidGlSwapBuffers() {
     if (!s_current) {
         return;
@@ -257,8 +376,11 @@ void AndroidGlSwapBuffers() {
     GlEsFrameDone();
 
     if (s_current->m_surface != EGL_NO_SURFACE) {
+        PaceFrame(s_current);
+
         uint64_t start = GlEsNowNs();
         eglSwapBuffers(s_current->m_display, s_current->m_surface);
+        s_lastSwapNs = MonotonicNs();
 
         if (start) {
             GlEsSwapTime(GlEsNowNs() - start);
