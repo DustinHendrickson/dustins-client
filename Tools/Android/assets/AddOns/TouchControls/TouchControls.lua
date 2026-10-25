@@ -269,7 +269,7 @@ end
 
 -- Jump jumps the moment it's touched (a drag from it still turns the camera after); the rest press on lift.
 AddButton("jump", "Interface\\Icons\\INV_Boots_08", "SPACE", "round")
-AddButton("interact", "Interface\\Icons\\INV_Misc_Gem_Pearl_04", "F18")
+AddButton("interact", "Interface\\Icons\\Ability_Hunter_BeastSoothe", "F18")
 AddButton("targetEnemy", "Interface\\Icons\\Ability_Hunter_SniperShot", "TAB")
 AddButton("targetFriend", "Interface\\Icons\\Achievement_Reputation_01", "F14")
 AddButton("chat", "Interface\\Icons\\INV_Letter_15", "ENTER")
@@ -701,7 +701,25 @@ local function SetupAssign()
     assignBanner:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 12, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
     assignBanner:SetBackdropColor(0, 0, 0, 0.9)
     assignBanner.text = assignBanner:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    assignBanner.text:SetPoint("CENTER")
+    assignBanner.text:SetPoint("LEFT", 12, 0)
+    assignBanner.text:SetPoint("RIGHT", assignBanner, "RIGHT", -128, 0)
+    assignBanner.text:SetJustifyH("LEFT")
+
+    -- Empties the button instead.
+    assignBanner.clear = CreateFrame("Button", "TouchControlsAssignClear", assignBanner, "UIPanelButtonTemplate")
+    assignBanner.clear:SetWidth(120)
+    assignBanner.clear:SetHeight(24)
+    assignBanner.clear:SetPoint("RIGHT", -4, 0)
+    assignBanner.clear:SetText("Clear button")
+    assignBanner.clear:SetScript("OnClick", function()
+        if assignAction then
+            PickupAction(assignAction)
+            ClearCursor()
+        end
+
+        EndAssign()
+        HideUIPanel(SpellBookFrame)
+    end)
 
     -- Over each spell, a button that takes the tap instead of casting it.
     assignOverlays = {}
@@ -722,7 +740,10 @@ local function SetupAssign()
                 local id = SpellBook_GetSpellID(spellButton:GetID())
                 local book = SpellBookFrame.bookType
 
-                if not assignAction or not id or id > (MAX_SPELLS or 1024) or IsPassiveSpell(id, book) then
+                -- An empty slot (past the tab's last spell) has an id too, of another tab's spell or of none; the game
+                -- disables it (IsEnabled gives 0, not nil, for a disabled button).
+                if not assignAction or not id or id > (MAX_SPELLS or 1024) or spellButton:IsEnabled() ~= 1 or
+                        not GetSpellName(id, book) or IsPassiveSpell(id, book) then
                     return
                 end
 
@@ -739,6 +760,18 @@ local function SetupAssign()
 
     SpellBookFrame:HookScript("OnHide", EndAssign)
 
+    -- Turning the page or tab: only slots with a spell take a tap.
+    hooksecurefunc("SpellButton_UpdateButton", function(button)
+        local overlay = assignOverlays[button:GetID()]
+
+        if overlay then
+            if assignAction and button:IsEnabled() == 1 then
+                overlay:Show()
+            else
+                overlay:Hide()
+            end
+        end
+    end)
 end
 
 function TouchControls_AssignStart()
@@ -757,11 +790,15 @@ function TouchControls_AssignStart()
         ToggleSpellBook(BOOKTYPE_SPELL)
     end
 
-    assignBanner.text:SetText(format("Tap a spell to put it on button %d", lastHeldSlot))
+    assignBanner.text:SetText(format("Tap a spell for button %d", lastHeldSlot))
     assignBanner:Show()
 
-    for _, overlay in ipairs(assignOverlays) do
-        overlay:Show()
+    for index, overlay in ipairs(assignOverlays) do
+        if _G["SpellButton" .. index]:IsEnabled() == 1 then
+            overlay:Show()
+        else
+            overlay:Hide()
+        end
     end
 end
 
@@ -2464,11 +2501,11 @@ local HELP = {
     { title = "Spells and the wheel", text = {
         "The buttons around jump are your action bar. |cffffd200Tap|r one to use it.",
         "|cffffd200The number button|r in the corner turns to the next page of your bar: 1, 2, 3... and back to 1.",
-        "|cffffd200Put a spell on a button|r: hold the button. The spellbook opens; tap the spell you want there.",
+        "|cffffd200Put a spell on a button|r: hold the button. The spellbook opens; tap the spell you want there, or |cffffd200Clear button|r at its top to empty it.",
         "You can also drag a spell or item from the spellbook or your bags and drop it on a button.",
         "|cffffd200Lock buttons|r (in the menu) stops a long press from opening the spellbook.",
         "|cffffd200Buttons on screen|r (in the menu): show 12, 8, 6 or 4. Fewer are bigger; the number button steps through the rest.",
-        "Interact (the glowing orb) loots, talks to or uses the nearest thing. The two target buttons pick the nearest enemy, or friend.",
+        "Interact (the open hand) loots, talks to or uses the nearest thing. The two target buttons pick the nearest enemy, or friend.",
     } },
     { title = "The top bar", text = {
         "|cffffd200Letter|r: chat. |cffffd200Portrait|r: your character. |cffffd200Bag|r: all your bags.",
