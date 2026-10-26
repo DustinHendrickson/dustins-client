@@ -48,7 +48,7 @@ target_include_directories(Wow
 )
 
 if (WOWDECOMP_PLATFORM_WIN)
-    target_link_options(Wow PRIVATE "/INCREMENTAL:NO" "/ENTRY:start")
+    target_link_options(Wow PRIVATE "/INCREMENTAL:NO" "/ENTRY:start" "/MAP")
 endif ()
 
 # On macOS Wow is "World of Warcraft.app", as Blizzard's Mac client was named, built into bin/Mac/Apps.noindex (out of
