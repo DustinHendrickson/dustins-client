@@ -46,7 +46,7 @@ float Score(const InteractSearch& search, const C3Vector& position, float* dista
 
 int32_t InteractProc(WOWGUID guid, void* param) {
     InteractSearch& search = *static_cast<InteractSearch*>(param);
-    CGObject_C* object = ClntObjMgrObjectPtr(guid, TYPEMASK_OBJECT, __FILE__, __LINE__);
+    CGObject_C* object = ClntObjMgrObjectPtr(guid, TYPE_OBJECT, __FILE__, __LINE__);
 
     if (!object || object == search.player) {
         return 1;
@@ -56,7 +56,7 @@ int32_t InteractProc(WOWGUID guid, void* param) {
     float score;
     bool isUnit = false;
 
-    if (object->m_obj->m_type & TYPEMASK_UNIT) {
+    if (object->m_obj->m_type & TYPE_UNIT) {
         CGUnit_C* unit = static_cast<CGUnit_C*>(object);
         bool dead = unit->IsDeadOrGhost() || unit->m_unit->m_unitFieldHealth <= 0;
 
@@ -76,7 +76,7 @@ int32_t InteractProc(WOWGUID guid, void* param) {
         }
 
         isUnit = true;
-    } else if (object->m_obj->m_type & TYPEMASK_GAMEOBJECT) {
+    } else if (object->m_obj->m_type & TYPE_GAMEOBJECT) {
         CGGameObject_C* gameObject = static_cast<CGGameObject_C*>(object);
 
         if (!gameObject->CanUse()) {

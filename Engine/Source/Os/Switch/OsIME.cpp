@@ -5,8 +5,8 @@
 #include "Engine/Source/Os/OsIME.h"
 #include "Engine/Source/Os/Switch/SwitchInput.h"
 
-int32_t OsIMEGetLanguageMode() {
-    return 0;
+OS_IME_LANGUAGEMODE OsIMEGetLanguageMode() {
+    return OS_IME_MODE_ROMAN;
 }
 
 int32_t OsIMEGetCompositionString(char* buffer, uint32_t bufferSize) {
