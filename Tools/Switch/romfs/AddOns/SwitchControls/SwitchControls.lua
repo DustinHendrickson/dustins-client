@@ -299,6 +299,7 @@ local HELP_COLUMNS = {
         { "ZR", "R", "Target friendly / neutral" },
         { "RStickClick", "Interact: loot, talk, use" },
         { "ZL", "ZR", "Hold: Shift / Ctrl bindings" },
+        { "ZL", "ZR", "Y", "Emotes" },
         { "LStickClick", "Autorun" },
     },
     {
@@ -417,6 +418,7 @@ do
     Toggle("autoUiScale", "Handheld UI size", 30, 70)
     Toggle("batterySaver", "Battery saver", 245, 70)
     Toggle("hideChat", "Hide chat", 460, 70)
+    Toggle("emotes", "Emotes", 30, 162)
 
     local close = CreateFrame("Button", nil, help, "UIPanelButtonTemplate")
     close:SetWidth(180)
@@ -427,7 +429,7 @@ do
         help:Hide()
     end)
 
-    help:SetHeight(rows + 176)
+    help:SetHeight(rows + 222)
 
     -- As large as fits: the screen's height in UI units shrinks as the UI scale grows (handheld).
     help:SetScript("OnShow", function(self)
@@ -450,6 +452,7 @@ end
 BINDING_HEADER_SWITCHCONTROLS = "Switch Controls"
 BINDING_NAME_SWITCHCONTROLS_INTERACT = "Interact (loot, talk, use)"
 BINDING_NAME_SWITCHCONTROLS_TARGETNONHOSTILE = "Target nearest friendly or neutral"
+BINDING_NAME_SWITCHCONTROLS_EMOTES = "Emotes"
 local interact = CreateFrame("Button", "SwitchControlsInteract", UIParent)
 interact:SetScript("OnClick", function()
     if not SwitchControls_Interact() then
@@ -479,7 +482,7 @@ local WINDOWS = {
     "PetitionFrame", "TradeSkillFrame", "SpellBookFrame", "CharacterFrame", "FriendsFrame", "PVPFrame",
     -- The Lua error dialogs sit in the middle of the screen, where the right stick's look clicks: they need the cursor
     -- to be closed, or the camera can't turn.
-    "BasicScriptErrors", "ScriptErrors", "ScriptErrorsFrame",
+    "BasicScriptErrors", "ScriptErrors", "ScriptErrorsFrame", "SwitchControlsEmotes",
 }
 
 -- The windows that want the pointer that are open, as a set, and how many.
@@ -796,6 +799,69 @@ frame:SetScript("OnUpdate", function(self, elapsed)
 end)
 
 ---------------------------------------------------------------------------------------------------------------------
+-- Emotes (ZL + ZR + Y, the "Emotes" option): a panel of the game's emotes, each a button. It is one of the windows that
+-- want the pointer, so it opens in cursor mode: the D-pad goes between the emotes, A does one and closes the panel,
+-- Plus closes it. A tap works as well.
+
+do
+    local EMOTES = { "WAVE", "HELLO", "BYE", "THANK", "BOW", "CHEER", "DANCE", "LAUGH", "APPLAUD", "SALUTE",
+        "POINT", "FLEX", "KISS", "CRY", "ROAR", "CHICKEN", "YES", "NO", "KNEEL", "RUDE" }
+    local COLUMNS, WIDTH, HEIGHT, GAP = 5, 130, 40, 10
+
+    local panel = CreateFrame("Frame", "SwitchControlsEmotes", UIParent)
+    panel:SetFrameStrata("DIALOG")
+    panel:SetToplevel(true)
+    panel:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    panel:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true,
+        tileSize = 32,
+        edgeSize = 32,
+        insets = { left = 11, right = 12, top = 12, bottom = 11 },
+    })
+    panel:EnableMouse(true)
+    panel:Hide()
+    table.insert(UISpecialFrames, "SwitchControlsEmotes")
+
+    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetText("Emotes")
+    title:SetPoint("TOP", panel, "TOP", 0, -22)
+
+    local rows = math.ceil(#EMOTES / COLUMNS)
+
+    for index, token in ipairs(EMOTES) do
+        local column, row = (index - 1) % COLUMNS, math.floor((index - 1) / COLUMNS)
+        local button = CreateFrame("Button", "SwitchControlsEmote" .. index, panel, "UIPanelButtonTemplate")
+        button:SetWidth(WIDTH)
+        button:SetHeight(HEIGHT)
+        button:SetPoint("TOPLEFT", panel, "TOPLEFT", 26 + column * (WIDTH + GAP), -56 - row * (HEIGHT + GAP))
+        button:SetText("/" .. string.lower(token))
+        button:SetScript("OnClick", function()
+            panel:Hide()
+            DoEmote(token)
+        end)
+    end
+
+    panel:SetWidth(52 + COLUMNS * WIDTH + (COLUMNS - 1) * GAP)
+    panel:SetHeight(84 + rows * HEIGHT + (rows - 1) * GAP)
+
+    -- As large as fits, like the controls list.
+    panel:SetScript("OnShow", function(self)
+        local fit = (UIParent:GetHeight() - 20) / self:GetHeight()
+        self:SetScale(math.min(HELP_SCALE, fit))
+    end)
+
+    function SwitchControls_ToggleEmotes()
+        if panel:IsShown() then
+            panel:Hide()
+        elseif SwitchControlsDB and SwitchControlsDB.emotes then
+            panel:Show()
+        end
+    end
+end
+
+---------------------------------------------------------------------------------------------------------------------
 -- Hiding the chat (the "Hide chat" option): its windows, tabs and buttons (the friends counter too) go under a hidden frame, where the chat code's
 -- own Show calls (docking, fading, a new tab) can't bring them back and messages still arrive. The typing box of each
 -- window stays on the screen, where it was, so Y still opens chat and sends; it hides again once the message is sent.
@@ -895,6 +961,7 @@ local OPTION_DEFAULTS = {
     autoUiScale = true,
     batterySaver = false,
     hideChat = false,
+    emotes = true,
 }
 
 local function LoadOptions()
@@ -927,6 +994,7 @@ end
 local CONTROLLER_BINDINGS = {
     { key = "F17", action = "SWITCHCONTROLS_INTERACT" },
     { key = "CTRL-TAB", action = "SWITCHCONTROLS_TARGETNONHOSTILE", replaces = "TARGETNEARESTFRIEND" },
+    { key = "CTRL-SHIFT-3", action = "SWITCHCONTROLS_EMOTES" },
 }
 
 local function BindInteract()

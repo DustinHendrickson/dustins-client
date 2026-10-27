@@ -5,4 +5,7 @@
 	<Binding name="SWITCHCONTROLS_TARGETNONHOSTILE" header="SWITCHCONTROLS">
 		SwitchControls_TargetNonHostile()
 	</Binding>
+	<Binding name="SWITCHCONTROLS_EMOTES" header="SWITCHCONTROLS">
+		SwitchControls_ToggleEmotes()
+	</Binding>
 </Bindings>
