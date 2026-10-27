@@ -2863,7 +2863,10 @@ int32_t SE2::CreateWaveData(FMOD::System* system, const char* filename, FMOD_MOD
     exinfo.numchannels = 0;
     exinfo.defaultfrequency = 0;
     exinfo.format = FMOD_SOUND_FORMAT_NONE;
-    exinfo.decodebuffersize = decodeBufferSize;
+    // Script sounds and music (PlaySoundFile, PlayMusic) ask for 0xFFFFFFFF samples. Our FMOD build refuses that for a
+    // looping stream (FMOD_ERR_INVALID_PARAM when the load finishes), and script music always loops, so add-ons' music
+    // (VoiceOver's quest dialogue among it) never played: it gets FMOD's default buffer instead.
+    exinfo.decodebuffersize = decodeBufferSize == 0xFFFFFFFF ? 0 : decodeBufferSize;
     exinfo.initialsubsound = 0;
     exinfo.numsubsounds = 0;
     exinfo.inclusionlist = nullptr;
