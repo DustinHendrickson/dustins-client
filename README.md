@@ -202,7 +202,8 @@ Add-ons go in `sdmc:/switch/wow/Interface/AddOns/`, as on a PC. Settings, logs a
    camera, B jumps, A, X, Y and the D-pad are action buttons, R targets the nearest enemy, ZR + R the nearest friendly
    or neutral unit, and clicking the right stick interacts (loot, talk, use). Menus and windows switch to cursor
    mode, where the D-pad jumps between buttons and A clicks. Plus is Escape. The controls list also has options: a
-   hint bar, inverted camera, a larger handheld UI, a 30 fps battery saver, and **Hide chat**.
+   hint bar, inverted camera, a larger handheld UI, a 30 fps battery saver, **Hide chat**, and **Emotes**. ZL + ZR + Y
+   opens the emotes panel (/wave, /thank, /dance...): the D-pad picks one, A does it.
 
 Docked, the game renders at 1920x1080; handheld at 1280x720. Logs go to `sdmc:/switch/wow/Logs/Console.txt`, crash
 reports to `Errors/`: please attach them when reporting problems.
@@ -277,6 +278,8 @@ edit the file on your computer before copying `Data`.
 - **Top bar:** chat, your character, all bags, an actions list (sit, sheathe, follow, nameplates, hide / show chat and more), a
   Shift / Ctrl / Alt button for the next touch, the touch menu (the game's windows, bag slots and settings such as
   interface size, text size, render resolution and a 30 fps battery saver), and an eye that hides the controls.
+- **Emotes:** the face button left of the target buttons opens a panel of emotes (/wave, /thank, /dance...); tap one.
+  The touch menu's **Emote button** setting hides it.
 - A **How to play** guide opens the first time you enter the world, and any time from the touch menu.
 
 ### Files on the device
