@@ -24,6 +24,7 @@ BINDING_NAME_TOUCHCONTROLS_DISMOUNT = "Dismount or leave the vehicle"
 BINDING_NAME_TOUCHCONTROLS_FOLLOW = "Follow target"
 BINDING_NAME_TOUCHCONTROLS_MODIFIER = "Touch controls: Shift / Ctrl / Alt for the next tap"
 BINDING_NAME_TOUCHCONTROLS_CHAT = "Hide or show the chat"
+BINDING_NAME_TOUCHCONTROLS_EMOTES = "Touch controls: emotes"
 
 local defaults = {
     style = "wheel",    -- "wheel": the thumb wheel; "bars": the default action bars
@@ -38,6 +39,7 @@ local defaults = {
     cameraInvert = false,
     wheelCount = 12,    -- the wheel's buttons on screen (WHEEL_LAYOUTS)
     lockButtons = false,    -- holding a wheel button doesn't open the spellbook
+    emoteButton = true,     -- the emotes button beside the targeting buttons
     graphicsChosen = false, -- whether the phone's graphics defaults have been set (once, then they're the player's)
     glowChosen = false, -- whether the full-screen glow has been turned off (once, likewise)
 }
@@ -273,6 +275,7 @@ AddButton("jump", "Interface\\Icons\\INV_Boots_08", "SPACE", "round")
 AddButton("interact", "Interface\\Icons\\Ability_Hunter_BeastSoothe", "F18")
 AddButton("targetEnemy", "Interface\\Icons\\Ability_Hunter_SniperShot", "TAB")
 AddButton("targetFriend", "Interface\\Icons\\Achievement_Reputation_01", "F14")
+AddButton("emote", "Interface\\Icons\\Spell_Holy_Silence", nil)
 AddButton("chat", "Interface\\Icons\\INV_Letter_15", "ENTER")
 AddButton("character", nil, "C")
 AddButton("bags", "Interface\\Icons\\INV_Misc_Bag_08", "F19")
@@ -312,6 +315,7 @@ local function UpdateModifier()
     end
 end
 controls.actions.holdAction = "TOUCHCONTROLS_RADIAL"
+controls.emote.holdAction = "TOUCHCONTROLS_EMOTES"
 AddButton("menu", "Interface\\Icons\\INV_Misc_Gear_01", "F16")
 AddButton("toggle", "Interface\\Icons\\INV_Misc_Eye_01", "F15")
 AddButton("page", nil, nil)
@@ -510,7 +514,7 @@ end
 ------------------------------------------------------------------------------------------------------------------------
 -- Controls under the game's windows: a bag, a dialog or the map over a control takes the fingers there instead.
 
-local covering = { "GameMenuFrame", "TouchControlsMenu", "TouchControlsHelp", "LootFrame", "WorldMapFrame", "InterfaceOptionsFrame",
+local covering = { "GameMenuFrame", "TouchControlsMenu", "TouchControlsHelp", "TouchControlsEmotes", "LootFrame", "WorldMapFrame", "InterfaceOptionsFrame",
     "VideoOptionsFrame", "AudioOptionsFrame", "KeyBindingFrame", "MacroFrame", "MacroPopupFrame", "ChatConfigFrame",
     "HelpFrame", "StaticPopup1", "StaticPopup2", "StaticPopup3", "StaticPopup4", "ItemRefTooltip", "TradeFrame",
     "MerchantFrame", "GossipFrame", "QuestFrame", "TaxiFrame", "BankFrame", "MailFrame", "OpenMailFrame",
@@ -663,6 +667,92 @@ function TouchControls_ToggleRadial()
 end
 
 radialCatcher:SetScript("OnMouseUp", CloseRadial)
+
+------------------------------------------------------------------------------------------------------------------------
+-- The emotes, opened by the emotes button beside the targeting buttons (a tap or a hold): a panel of the game's emotes,
+-- each a button. A tap does the emote (at the target, if any) and closes it; a tap anywhere else closes it. While it is
+-- open it covers the other controls (the covering list). In a block: the main chunk is near Lua's 200 locals.
+
+do
+    local EMOTES = { "WAVE", "HELLO", "BYE", "THANK", "BOW", "CHEER", "DANCE", "LAUGH", "APPLAUD", "SALUTE",
+        "POINT", "FLEX", "KISS", "CRY", "ROAR", "CHICKEN", "YES", "NO", "KNEEL", "RUDE" }
+    local COLUMNS = 5
+
+    local catcher = CreateFrame("Frame", "TouchControlsEmotes", UIParent)
+    catcher:SetAllPoints(UIParent)
+    catcher:SetFrameStrata("DIALOG")
+    catcher:EnableMouse(true)
+    catcher:Hide()
+
+    local shade = catcher:CreateTexture(nil, "BACKGROUND")
+    shade:SetAllPoints()
+    shade:SetTexture(0, 0, 0, 0.25)
+
+    local panel = CreateFrame("Frame", nil, catcher)
+    panel:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 32, edgeSize = 24,
+        insets = { left = 8, right = 8, top = 8, bottom = 8 },
+    })
+    panel:EnableMouse(true)
+
+    local emoteButtons = {}
+
+    for index, token in ipairs(EMOTES) do
+        local button = CreateFrame("Button", "TouchControlsEmote" .. index, panel, "UIPanelButtonTemplate")
+        button:SetText("/" .. strlower(token))
+        button:SetScript("OnClick", function()
+            catcher:Hide()
+            DoEmote(token)
+        end)
+        emoteButtons[index] = button
+    end
+
+    catcher:SetScript("OnMouseUp", function()
+        catcher:Hide()
+    end)
+
+    catcher:SetScript("OnShow", function()
+        SyncControls()
+    end)
+
+    catcher:SetScript("OnHide", function()
+        SyncControls()
+    end)
+
+    function TouchControls_ToggleEmotes()
+        if catcher:IsShown() then
+            catcher:Hide()
+            return
+        end
+
+        -- Buttons as big as the actions list's rows are tall, in rows of five.
+        local height = ScreenHeight()
+        local buttonHeight = height * 0.1
+        local buttonWidth = height * 0.3
+        local gap = height * 0.018
+        local padding = height * 0.03
+        local rows = ceil(#EMOTES / COLUMNS)
+        local scale = buttonHeight / 22
+
+        panel:SetWidth(COLUMNS * buttonWidth + (COLUMNS - 1) * gap + padding * 2)
+        panel:SetHeight(rows * buttonHeight + (rows - 1) * gap + padding * 2)
+        panel:ClearAllPoints()
+        panel:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+
+        for index, button in ipairs(emoteButtons) do
+            local column, row = (index - 1) % COLUMNS, floor((index - 1) / COLUMNS)
+            button:SetScale(scale)
+            button:SetWidth(buttonWidth / scale)
+            button:SetHeight(22)
+            button:ClearAllPoints()
+            button:SetPoint("TOPLEFT", panel, "TOPLEFT", (padding + column * (buttonWidth + gap)) / scale, -(padding + row * (buttonHeight + gap)) / scale)
+        end
+
+        catcher:Show()
+    end
+end
 
 ------------------------------------------------------------------------------------------------------------------------
 -- Putting spells on the wheel. Holding a wheel button opens the spellbook for it: a tap on a spell puts the spell on
@@ -1122,6 +1212,14 @@ lockCheck:SetScript("OnClick", function(self)
     db.lockButtons = self:GetChecked() and true or false
 end)
 
+-- The emotes button beside the targeting buttons (TouchControlsMenuEmote; no local, the main chunk is near Lua's 200).
+CreateFrame("CheckButton", "TouchControlsMenuEmote", displayHolder, "UICheckButtonTemplate")
+TouchControlsMenuEmoteText:SetText("Emote button")
+TouchControlsMenuEmote:SetScript("OnClick", function(self)
+    db.emoteButton = self:GetChecked() and true or false
+    Refresh()
+end)
+
 local function UpdateSliders()
     updatingSliders = true
     uiScaleSlider:SetValue(tonumber(GetCVar("uiScale")) or 1)
@@ -1137,6 +1235,7 @@ local function UpdateSliders()
     batteryCheck:SetChecked(db.frameRate == 30)
     invertCheck:SetChecked(db.cameraInvert)
     lockCheck:SetChecked(db.lockButtons)
+    TouchControlsMenuEmote:SetChecked(db.emoteButton)
     glowCheck:SetChecked(GetCVar("ffxGlow") == "1")
     cameraSlider:SetValue(db.cameraSpeed)
 
@@ -1614,7 +1713,7 @@ local function FillMenu()
     -- The settings: sliders, each under its label, then two columns of check boxes.
     local sliderRow = 44
     displayHolder:SetWidth(300)
-    displayHolder:SetHeight(sliderRow * #displaySliders + 60)
+    displayHolder:SetHeight(sliderRow * #displaySliders + 88)
 
     for index, slider in ipairs(displaySliders) do
         slider:ClearAllPoints()
@@ -1630,6 +1729,8 @@ local function FillMenu()
     invertCheck:SetPoint("TOPLEFT", displayHolder, "TOP", 10, checksTop)
     lockCheck:ClearAllPoints()
     lockCheck:SetPoint("TOPLEFT", displayHolder, "TOP", 10, checksTop - 28)
+    TouchControlsMenuEmote:ClearAllPoints()
+    TouchControlsMenuEmote:SetPoint("TOPLEFT", displayHolder, "TOPLEFT", 0, checksTop - 56)
 
     -- Most of the screen, below the top row of buttons: two panels side by side, the buttons along the bottom.
     local menuWidth, menuHeight = width * 0.86, height * 0.84
@@ -1860,10 +1961,32 @@ local function PlaceTracker()
         return
     end
 
-    -- A short block beside the minimap: the screen's right side under it is left to the camera.
+    -- A block beside the minimap, down to just above the highest touch button under it (the screen's right side under
+    -- the minimap is left to the camera). The tracker shows only the quests that fit its height, so it takes all of
+    -- that room: a fixed short block held one quest.
+    local height = ScreenHeight()
     local right = -(MinimapCluster and MinimapCluster:GetWidth() or 192) - 12
-    WatchFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", right, -ScreenHeight() * 0.15)
-    WatchFrame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", right, ScreenHeight() * 0.68)
+    local trackerRight = UIParent:GetWidth() + right
+    local trackerLeft = trackerRight - WatchFrame:GetWidth()
+    local bottom = height * 0.3
+    local uiScale = UIParent:GetEffectiveScale()
+
+    for _, list in ipairs({ slots, buttons }) do
+        for _, frame in pairs(list) do
+            local left, frameBottom, width, frameHeight = frame:GetRect()
+
+            if left and frame:IsShown() then
+                local scale = frame:GetEffectiveScale() / uiScale
+
+                if (left + width) * scale > trackerLeft and left * scale < trackerRight then
+                    bottom = max(bottom, (frameBottom + frameHeight) * scale + 8)
+                end
+            end
+        end
+    end
+
+    WatchFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", right, -height * 0.15)
+    WatchFrame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", right, min(bottom, height * 0.68))
 
     -- A vehicle's seats, left of the tracker rather than over the wheel.
     if VehicleSeatIndicator then
@@ -1953,6 +2076,15 @@ local function Layout()
         else
             PlaceAt(buttons[name], centerX - height * 0.17, centerY - height * 0.05 + height * 0.11 * (i - 1))
         end
+    end
+
+    -- The emotes button, left of the targeting buttons (shown as the menu's option has it: ApplyHidden).
+    SizeRound(buttons.emote, height * SMALL_SIZE)
+
+    if wheel then
+        PlaceAt(buttons.emote, columnX - height * SMALL_SIZE * 1.6, height * 0.3)
+    else
+        PlaceAt(buttons.emote, centerX - height * (0.17 + SMALL_SIZE * 1.6), centerY + height * 0.06)
     end
 
     -- Chat, the character panel, the bags, the menu and the show / hide toggle at the top, between the unit frames and
@@ -2140,8 +2272,9 @@ local function ApplyHidden()
 
     for name, button in pairs(buttons) do
         if name ~= "toggle" then
-            -- The page button with the wheel only; leave in a vehicle only.
-            if not db.hidden and (name ~= "page" or wheel) and (name ~= "leave" or (CanExitVehicle and CanExitVehicle())) then
+            -- The page button with the wheel only; leave in a vehicle only; emotes when the option has it.
+            if not db.hidden and (name ~= "page" or wheel) and (name ~= "leave" or (CanExitVehicle and CanExitVehicle()))
+                    and (name ~= "emote" or db.emoteButton) then
                 button:Show()
             else
                 button:Hide()
@@ -2211,7 +2344,7 @@ local function EnsureBindings()
 
         for key, action in pairs({ F18 = "TOUCHCONTROLS_INTERACT", F14 = "TOUCHCONTROLS_TARGETNONHOSTILE", F15 = "TOUCHCONTROLS_TOGGLE", F16 = "TOUCHCONTROLS_MENU", F17 = "TOUCHCONTROLS_NEXTGROUP", F19 = "TOUCHCONTROLS_BAGS",
             ["CTRL-F14"] = "TOUCHCONTROLS_DISMOUNT", ["CTRL-F15"] = "TOUCHCONTROLS_FOLLOW", ["CTRL-F16"] = "TOUCHCONTROLS_RADIAL",
-            ["CTRL-F17"] = "TOUCHCONTROLS_ASSIGN", ["CTRL-F18"] = "TOUCHCONTROLS_MODIFIER" }) do
+            ["CTRL-F17"] = "TOUCHCONTROLS_ASSIGN", ["CTRL-F18"] = "TOUCHCONTROLS_MODIFIER", ["CTRL-F19"] = "TOUCHCONTROLS_EMOTES" }) do
             if not GetBindingKey(action) and (GetBindingAction(key) or "") == "" then
                 SetBinding(key, action)
             end
@@ -2229,6 +2362,7 @@ local function EnsureBindings()
     controls.actions.key = GetBindingKey("TOUCHCONTROLS_RADIAL")
     controls.modifier.key = GetBindingKey("TOUCHCONTROLS_MODIFIER")
     controls.leave.key = GetBindingKey("TOUCHCONTROLS_DISMOUNT")
+    controls.emote.key = GetBindingKey("TOUCHCONTROLS_EMOTES")
 
     for _, entry in ipairs(radialEntries) do
         controls[entry.name].key = GetBindingKey(entry.action)
@@ -2520,6 +2654,7 @@ local HELP = {
     { title = "The top bar", text = {
         "|cffffd200Letter|r: chat. |cffffd200Portrait|r: your character. |cffffd200Bag|r: all your bags.",
         "|cffffd200Mask|r: actions that are only keys on a keyboard (sit, sheathe, walk, map, assist, focus, reply, marks...), and hiding or showing the chat.",
+        "|cffffd200Emotes|r: the face left of the target buttons opens the emotes (/wave, /thank, /dance...); tap one. The menu can hide it.",
         "|cffffd200Key|r: Shift, Ctrl or Alt for your next tap (see Shift, Ctrl and Alt).",
         "|cffffd200Gear|r: the menu. Every game window, your bag slots and the settings.",
         "|cffffd200Eye|r: hide the touch controls, for screenshots and cutscenes. Tap it again to bring them back.",

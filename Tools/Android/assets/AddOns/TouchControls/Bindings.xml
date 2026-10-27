@@ -36,6 +36,9 @@
 	<Binding name="TOUCHCONTROLS_CHAT">
 		TouchControls_ToggleChat()
 	</Binding>
+	<Binding name="TOUCHCONTROLS_EMOTES">
+		TouchControls_ToggleEmotes()
+	</Binding>
 	<Binding name="TOUCHCONTROLS_FOLLOW">
 		FollowUnit("target")
 	</Binding>
