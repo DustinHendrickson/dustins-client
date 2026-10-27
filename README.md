@@ -201,7 +201,8 @@ Add-ons go in `sdmc:/switch/wow/Interface/AddOns/`, as on a PC. Settings, logs a
 3. Hold **Minus** in the game for the controls list. In short: the left stick moves, the right stick turns the
    camera, B jumps, A, X, Y and the D-pad are action buttons, R targets the nearest enemy, ZR + R the nearest friendly
    or neutral unit, and clicking the right stick interacts (loot, talk, use). Menus and windows switch to cursor
-   mode, where the D-pad jumps between buttons and A clicks. Plus is Escape.
+   mode, where the D-pad jumps between buttons and A clicks. Plus is Escape. The controls list also has options: a
+   hint bar, inverted camera, a larger handheld UI, a 30 fps battery saver, and **Hide chat**.
 
 Docked, the game renders at 1920x1080; handheld at 1280x720. Logs go to `sdmc:/switch/wow/Logs/Console.txt`, crash
 reports to `Errors/`: please attach them when reporting problems.
@@ -272,8 +273,8 @@ edit the file on your computer before copying `Data`.
 - **Look:** drag on the right side of the screen. **Zoom:** pinch with two fingers.
 - **Select:** tap a creature or player. **Talk, loot, attack or right-click:** hold your finger on it.
 - **Abilities:** the wheel of buttons on the right, around Jump, with a number button that turns the page. Hold a
-  wheel button to put a spell on it from the spellbook.
-- **Top bar:** chat, your character, all bags, an actions list (sit, sheathe, follow, nameplates and more), a
+  wheel button to put a spell on it from the spellbook, or to clear it.
+- **Top bar:** chat, your character, all bags, an actions list (sit, sheathe, follow, nameplates, hide / show chat and more), a
   Shift / Ctrl / Alt button for the next touch, the touch menu (the game's windows, bag slots and settings such as
   interface size, text size, render resolution and a 30 fps battery saver), and an eye that hides the controls.
 - A **How to play** guide opens the first time you enter the world, and any time from the touch menu.
