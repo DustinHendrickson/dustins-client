@@ -23,6 +23,7 @@ BINDING_NAME_TOUCHCONTROLS_ASSIGN = "Touch controls: put a spell on the held but
 BINDING_NAME_TOUCHCONTROLS_DISMOUNT = "Dismount or leave the vehicle"
 BINDING_NAME_TOUCHCONTROLS_FOLLOW = "Follow target"
 BINDING_NAME_TOUCHCONTROLS_MODIFIER = "Touch controls: Shift / Ctrl / Alt for the next tap"
+BINDING_NAME_TOUCHCONTROLS_CHAT = "Hide or show the chat"
 
 local defaults = {
     style = "wheel",    -- "wheel": the thumb wheel; "bars": the default action bars
@@ -373,10 +374,11 @@ local radialEntries = {
     { name = "radialReply", action = "REPLY", label = "Reply", icon = "Interface\\Icons\\INV_Letter_15", spare = "SHIFT-F17" },
     { name = "radialStopAttack", action = "STOPATTACK", label = "Stop attack", icon = "Interface\\Icons\\Ability_Rogue_FeignDeath", spare = "SHIFT-F18" },
     { name = "radialPetAttack", action = "PETATTACK", label = "Pet attack", icon = "Interface\\Icons\\Ability_GhoulFrenzy", spare = "SHIFT-F19" },
-    { name = "radialSkull", action = "RAIDTARGET8", label = "Mark skull", icon = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_8", spare = "SHIFT-CTRL-F14" },
-    { name = "radialNameplates", action = "ALLNAMEPLATES", label = "Nameplates", icon = "Interface\\Icons\\INV_Misc_Note_02", spare = "SHIFT-CTRL-F15" },
+    { name = "radialSkull", action = "RAIDTARGET8", label = "Mark skull", icon = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_8", spare = "CTRL-SHIFT-F14" },
+    { name = "radialNameplates", action = "ALLNAMEPLATES", label = "Nameplates", icon = "Interface\\Icons\\INV_Misc_Note_02", spare = "CTRL-SHIFT-F15" },
     { name = "radialDismount", action = "TOUCHCONTROLS_DISMOUNT", label = "Dismount / leave", icon = "Interface\\Icons\\Ability_Mount_RidingHorse", spare = "CTRL-F14" },
     { name = "radialScreenshot", action = "SCREENSHOT", label = "Screenshot", icon = "Interface\\Icons\\INV_Misc_Spyglass_03", spare = "ALT-F19" },
+    { name = "radialChat", action = "TOUCHCONTROLS_CHAT", label = "Hide / show chat", icon = "Interface\\Icons\\INV_Misc_Note_01", spare = "CTRL-SHIFT-F16" },
 }
 
 -- Behind the ring, the whole screen: a tap on it closes the ring (and nothing reaches the world meanwhile).
@@ -2192,6 +2194,14 @@ local function EnsureBindings()
             SetBinding("F13")
         end
 
+        -- Keys the game names with their modifiers in its own order (ALT-CTRL-SHIFT-): a binding saved as SHIFT-CTRL-
+        -- never matches a key press. Those from before move to their CTRL-SHIFT- spares below.
+        for _, key in ipairs({ "SHIFT-CTRL-F14", "SHIFT-CTRL-F15", "SHIFT-CTRL-F16" }) do
+            if (GetBindingAction(key) or "") ~= "" then
+                SetBinding(key)
+            end
+        end
+
         -- The ring's actions the player has no key for get a key of the add-on's own.
         for _, entry in ipairs(radialEntries) do
             if not GetBindingKey(entry.action) and (GetBindingAction(entry.spare) or "") == "" then
@@ -2509,7 +2519,7 @@ local HELP = {
     } },
     { title = "The top bar", text = {
         "|cffffd200Letter|r: chat. |cffffd200Portrait|r: your character. |cffffd200Bag|r: all your bags.",
-        "|cffffd200Mask|r: actions that are only keys on a keyboard (sit, sheathe, walk, map, assist, focus, reply, marks...).",
+        "|cffffd200Mask|r: actions that are only keys on a keyboard (sit, sheathe, walk, map, assist, focus, reply, marks...), and hiding or showing the chat.",
         "|cffffd200Key|r: Shift, Ctrl or Alt for your next tap (see Shift, Ctrl and Alt).",
         "|cffffd200Gear|r: the menu. Every game window, your bag slots and the settings.",
         "|cffffd200Eye|r: hide the touch controls, for screenshots and cutscenes. Tap it again to bring them back.",
@@ -2747,6 +2757,96 @@ end)
 
 -- UIParent hides for the full-screen world map, cinematics and Alt-Z, and this frame with it: its controls go too, so
 -- taps reach what is showing, and come back with it.
+------------------------------------------------------------------------------------------------------------------------
+-- Hiding the chat: its windows, tabs and buttons (the friends counter too) go under a hidden frame, where the chat code's own Show calls (docking,
+-- fading, a new tab) can't bring them back and messages still arrive. The typing box of each window stays on the
+-- screen, where it was, so chat still opens and sends; it hides again once the message is sent. Kept in
+-- TouchControlsDB.chatHidden. (In a block: the main chunk is near Lua's 200 locals.)
+
+do
+    local stash = CreateFrame("Frame")
+    stash:Hide()
+    local parents = {}      -- frame -> its parent before
+
+    local function ChatParts()
+        local parts = { GeneralDockManager, ChatFrameMenuButton, FriendsMicroButton, CombatLogQuickButtonFrame_Custom }
+
+        for index = 1, NUM_CHAT_WINDOWS or 10 do
+            tinsert(parts, _G["ChatFrame" .. index])
+            tinsert(parts, _G["ChatFrame" .. index .. "Tab"])
+        end
+
+        return parts
+    end
+
+    function TouchControls_SetChatHidden(hidden)
+        if hidden then
+            for _, frame in pairs(ChatParts()) do
+                if not parents[frame] then
+                    parents[frame] = frame:GetParent()
+                    frame:SetParent(stash)
+                end
+            end
+
+            for index = 1, NUM_CHAT_WINDOWS or 10 do
+                local editBox = _G["ChatFrame" .. index .. "EditBox"]
+
+                if editBox and not parents[editBox] then
+                    parents[editBox] = editBox:GetParent()
+                    editBox:SetParent(UIParent)
+
+                    if editBox ~= ACTIVE_CHAT_EDIT_BOX then
+                        editBox:Hide()
+                    end
+                end
+            end
+        else
+            for frame, parent in pairs(parents) do
+                frame:SetParent(parent)
+            end
+
+            wipe(parents)
+
+            -- The typing box shows as the chat style has it (always, faded, for the "IM" style).
+            if ChatEdit_GetLastActiveWindow and GetCVar("chatStyle") == "im" then
+                local editBox = ChatEdit_GetLastActiveWindow()
+
+                if editBox then
+                    editBox:Show()
+                end
+            end
+        end
+    end
+
+    function TouchControls_ToggleChat()
+        TouchControlsDB.chatHidden = not TouchControlsDB.chatHidden
+        TouchControls_SetChatHidden(TouchControlsDB.chatHidden)
+    end
+
+    -- A sent or cancelled message leaves the typing box out, faded, in the "IM" chat style: away while the chat is.
+    hooksecurefunc("ChatEdit_DeactivateChat", function(editBox)
+        if TouchControlsDB and TouchControlsDB.chatHidden then
+            editBox:Hide()
+        end
+    end)
+
+    -- A window opened while hidden, and the combat log's buttons, which load with it.
+    hooksecurefunc("FCF_OpenNewWindow", function()
+        if TouchControlsDB and TouchControlsDB.chatHidden then
+            TouchControls_SetChatHidden(true)
+        end
+    end)
+
+    local watch = CreateFrame("Frame")
+    watch:RegisterEvent("PLAYER_ENTERING_WORLD")
+    watch:RegisterEvent("ADDON_LOADED")
+    watch:SetScript("OnEvent", function(self, event, name)
+        if TouchControlsDB and TouchControlsDB.chatHidden and (event == "PLAYER_ENTERING_WORLD" or name == "Blizzard_CombatLog") then
+            TouchControls_SetChatHidden(true)
+        end
+    end)
+end
+
 addon:SetScript("OnHide", function()
     TouchControls_ClearControls()
 end)

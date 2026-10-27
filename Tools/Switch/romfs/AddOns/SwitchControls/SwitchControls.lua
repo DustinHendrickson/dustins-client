@@ -399,6 +399,11 @@ do
         button:SetScript("OnClick", function()
             SwitchControlsDB[key] = not SwitchControlsDB[key]
             SwitchControls_SetOption(key, SwitchControlsDB[key])
+
+            if key == "hideChat" then
+                SwitchControls_SetChatHidden(SwitchControlsDB.hideChat)
+            end
+
             Refresh()
         end)
 
@@ -411,6 +416,7 @@ do
     Toggle("returnToPlay", "Back to play", 460, 116)
     Toggle("autoUiScale", "Handheld UI size", 30, 70)
     Toggle("batterySaver", "Battery saver", 245, 70)
+    Toggle("hideChat", "Hide chat", 460, 70)
 
     local close = CreateFrame("Button", nil, help, "UIPanelButtonTemplate")
     close:SetWidth(180)
@@ -790,6 +796,94 @@ frame:SetScript("OnUpdate", function(self, elapsed)
 end)
 
 ---------------------------------------------------------------------------------------------------------------------
+-- Hiding the chat (the "Hide chat" option): its windows, tabs and buttons (the friends counter too) go under a hidden frame, where the chat code's
+-- own Show calls (docking, fading, a new tab) can't bring them back and messages still arrive. The typing box of each
+-- window stays on the screen, where it was, so Y still opens chat and sends; it hides again once the message is sent.
+
+do
+    local stash = CreateFrame("Frame")
+    stash:Hide()
+    local parents = {}      -- frame -> its parent before
+
+    local function ChatParts()
+        local parts = { GeneralDockManager, ChatFrameMenuButton, FriendsMicroButton, CombatLogQuickButtonFrame_Custom }
+
+        for index = 1, NUM_CHAT_WINDOWS or 10 do
+            table.insert(parts, _G["ChatFrame" .. index])
+            table.insert(parts, _G["ChatFrame" .. index .. "Tab"])
+        end
+
+        return parts
+    end
+
+    function SwitchControls_SetChatHidden(hidden)
+        if hidden then
+            for _, part in pairs(ChatParts()) do
+                if not parents[part] then
+                    parents[part] = part:GetParent()
+                    part:SetParent(stash)
+                end
+            end
+
+            for index = 1, NUM_CHAT_WINDOWS or 10 do
+                local editBox = _G["ChatFrame" .. index .. "EditBox"]
+
+                if editBox and not parents[editBox] then
+                    parents[editBox] = editBox:GetParent()
+                    editBox:SetParent(UIParent)
+
+                    if editBox ~= ACTIVE_CHAT_EDIT_BOX then
+                        editBox:Hide()
+                    end
+                end
+            end
+        else
+            for part, parent in pairs(parents) do
+                part:SetParent(parent)
+            end
+
+            wipe(parents)
+
+            -- The typing box shows as the chat style has it (always, faded, for the "IM" style).
+            if ChatEdit_GetLastActiveWindow and GetCVar("chatStyle") == "im" then
+                local editBox = ChatEdit_GetLastActiveWindow()
+
+                if editBox then
+                    editBox:Show()
+                end
+            end
+        end
+    end
+
+    local function Hidden()
+        return SwitchControlsDB and SwitchControlsDB.hideChat
+    end
+
+    -- A sent or cancelled message leaves the typing box out, faded, in the "IM" chat style: away while the chat is.
+    hooksecurefunc("ChatEdit_DeactivateChat", function(editBox)
+        if Hidden() then
+            editBox:Hide()
+        end
+    end)
+
+    -- A window opened while hidden, and the combat log's buttons, which load with it.
+    hooksecurefunc("FCF_OpenNewWindow", function()
+        if Hidden() then
+            SwitchControls_SetChatHidden(true)
+        end
+    end)
+
+    local watch = CreateFrame("Frame")
+    watch:RegisterEvent("PLAYER_ENTERING_WORLD")
+    watch:RegisterEvent("ADDON_LOADED")
+    watch:SetScript("OnEvent", function(self, event, name)
+        if Hidden() and (event == "PLAYER_ENTERING_WORLD" or name == "Blizzard_CombatLog") then
+            SwitchControls_SetChatHidden(true)
+        end
+    end)
+end
+
+---------------------------------------------------------------------------------------------------------------------
 -- Options: kept by the Switch build in Registry.txt as soon as they change (SwitchControlsDB is written only on a clean
 -- logout or quit, which closing the game from the HOME menu skips). An option the Switch build has never stored comes
 -- from SwitchControlsDB, as earlier versions kept it, or the default.
@@ -800,6 +894,7 @@ local OPTION_DEFAULTS = {
     returnToPlay = true,
     autoUiScale = true,
     batterySaver = false,
+    hideChat = false,
 }
 
 local function LoadOptions()
