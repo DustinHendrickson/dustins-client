@@ -40,6 +40,10 @@ void AndroidInputSetMultiLineQuery(bool (*query)());
 // mouse is doing: a second finger there taps it while the first turns the camera.
 void AndroidInputSetUiAtPointQuery(bool (*query)(float x, float y));
 
+// Whether a UI frame that takes the mouse is drawn over the controls at a point (fractions of the screen from its
+// bottom left): a finger landing there goes to it, not to the control under it (unless the control is OnTop).
+void AndroidInputSetUiOverControlsQuery(bool (*query)(float x, float y));
+
 // Camera drag: relative movement per pixel of finger movement (1 by default), and up and down swapped.
 void AndroidInputSetCamera(float speed, bool invert);
 
@@ -70,6 +74,7 @@ enum AndroidInputControlFlag {
     AndroidInputControl_Round = 1,      // the circle in the area, not the whole of it: the gaps around are the world's
     AndroidInputControl_OnLift = 2,     // pressed when the finger lifts without dragging, not when it lands, so a drag
                                         // to turn the camera presses nothing (the game casts on the key's release anyway)
+    AndroidInputControl_OnTop = 4,      // on a window of its own over the UI: a window under it doesn't take its fingers
 };
 
 // holdKey: for an OnLift control, the key pressed instead when the finger stays on it without moving a moment

@@ -273,8 +273,8 @@ edit the file on your computer before copying `Data`.
 - **Move:** a joystick appears wherever your left thumb lands in the lower left. Double-tap it to autorun.
 - **Look:** drag on the right side of the screen. **Zoom:** pinch with two fingers.
 - **Select:** tap a creature or player. **Talk, loot, attack or right-click:** hold your finger on it.
-- **Abilities:** the wheel of buttons on the right, around Jump, with a number button that turns the page. Hold a
-  wheel button to put a spell on it from the spellbook, or to clear it.
+- **Abilities:** the wheel of buttons on the right, around Jump, with a number button that turns the page (tap for
+  the next, hold to go back). Hold a wheel button to put a spell on it from the spellbook, or to clear it.
 - **Top bar:** chat, your character, all bags, an actions list (sit, sheathe, follow, nameplates, hide / show chat and more), a
   Shift / Ctrl / Alt button for the next touch, the touch menu (the game's windows, bag slots and settings such as
   interface size, text size, render resolution and a 30 fps battery saver), and an eye that hides the controls.

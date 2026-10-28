@@ -17,6 +17,7 @@ BINDING_NAME_TOUCHCONTROLS_TARGETNONHOSTILE = "Target nearest friendly or neutra
 BINDING_NAME_TOUCHCONTROLS_TOGGLE = "Show or hide touch controls"
 BINDING_NAME_TOUCHCONTROLS_MENU = "Touch controls menu"
 BINDING_NAME_TOUCHCONTROLS_NEXTGROUP = "Touch controls: next buttons"
+BINDING_NAME_TOUCHCONTROLS_PREVGROUP = "Touch controls: previous buttons"
 BINDING_NAME_TOUCHCONTROLS_BAGS = "Touch controls: all bags"
 BINDING_NAME_TOUCHCONTROLS_RADIAL = "Touch controls: actions"
 BINDING_NAME_TOUCHCONTROLS_ASSIGN = "Touch controls: put a spell on the held button"
@@ -428,7 +429,7 @@ for _, entry in ipairs(radialEntries) do
     row.pressed:Hide()
 
     entry.button = row
-    Register(entry.name, row, nil, "lift")
+    Register(entry.name, row, nil, "lift,top")
     controls[entry.name].radial = true
 end
 
@@ -592,7 +593,7 @@ local function SyncControls()
 
             if left and (control.radial or not Covered(left, bottom, right, top)) then
                 -- Holding a wheel button opens the spellbook to put a spell on it, unless the buttons are locked.
-                local hold = control.holdAction and not (control.wheel and db.lockButtons) and GetBindingKey(control.holdAction) or nil
+                local hold = control.holdKey or control.holdAction and not (control.wheel and db.lockButtons) and GetBindingKey(control.holdAction) or nil
                 TouchControls_SetControl(name, left, bottom, right, top, control.key, control.flags, hold)
                 sent = true
             end
@@ -2178,14 +2179,16 @@ local function GroupUsed(page, group)
     return false
 end
 
--- The group the page button goes to next when it is on this page (nil: another page, through its key).
-local nextGroup
--- The page the page button turns the bar to, and the group to show once it has.
-local pendingPage, pendingGroup
+-- The groups a tap (next) and a hold (previous) on the page button go to when they're on this page (nil: another
+-- page, through its key).
+local nextGroup, prevGroup
+-- The group to show once the page button has turned the bar, by the page it turns to.
+local pendingGroups = {}
 
--- The page button: the next group with anything in it, this page's or the next pages' (page 1's first group whatever
--- is in it). Within the page, its binding (TOUCHCONTROLS_NEXTGROUP) moves the wheel along; to another page, that
--- page's binding (ACTIONPAGE1 to 6, SHIFT-1 to SHIFT-6 by default) turns the bar, a key press so it works in combat.
+-- The page button: a tap the next group, a hold the one before, this page's or the next (or last) page's, around from
+-- the last to page 1. Within the page, its binding (TOUCHCONTROLS_NEXTGROUP or PREVGROUP) moves the wheel along; to
+-- another page, that page's binding (ACTIONPAGE1 to 6, SHIFT-1 to SHIFT-6 by default) turns the bar, a key press so it
+-- works in combat.
 local function UpdatePage()
     local pages = NUM_ACTIONBAR_PAGES or 6
     local groups = WheelGroups()
@@ -2195,24 +2198,31 @@ local function UpdatePage()
     -- Pages numbered plainly, 1 on: with fewer buttons than keys a bar page is several of them, one after another.
     -- Every tap goes to the next, none skipped, so the number always says where the wheel is.
     buttons.page.text:SetText((OtherBar() and 0 or (current - 1) * groups) + group)
+    wipe(pendingGroups)
 
     -- On a vehicle's bar the page doesn't count: the page button only steps through its groups.
     if OtherBar() then
-        nextGroup, pendingPage, pendingGroup = group % groups + 1, nil, nil
+        nextGroup, prevGroup = group % groups + 1, (group - 2) % groups + 1
         controls.page.key = groups > 1 and GetBindingKey("TOUCHCONTROLS_NEXTGROUP") or nil
+        controls.page.holdKey = groups > 1 and GetBindingKey("TOUCHCONTROLS_PREVGROUP") or nil
         return
     end
 
-    local position = ((current - 1) * groups + group) % (pages * groups)
-    local targetPage, targetGroup = floor(position / groups) + 1, position % groups + 1
+    -- The group a step along (1 or -1) and the key that gets there.
+    local function Toward(step, binding)
+        local position = ((current - 1) * groups + group - 1 + step) % (pages * groups)
+        local targetPage, targetGroup = floor(position / groups) + 1, position % groups + 1
 
-    if targetPage == current then
-        nextGroup, pendingPage, pendingGroup = targetGroup, nil, nil
-        controls.page.key = GetBindingKey("TOUCHCONTROLS_NEXTGROUP")
-    else
-        nextGroup, pendingPage, pendingGroup = nil, targetPage, targetGroup
-        controls.page.key = GetBindingKey("ACTIONPAGE" .. targetPage)
+        if targetPage == current then
+            return targetGroup, GetBindingKey(binding)
+        end
+
+        pendingGroups[targetPage] = targetGroup
+        return nil, GetBindingKey("ACTIONPAGE" .. targetPage)
     end
+
+    nextGroup, controls.page.key = Toward(1, "TOUCHCONTROLS_NEXTGROUP")
+    prevGroup, controls.page.holdKey = Toward(-1, "TOUCHCONTROLS_PREVGROUP")
 end
 
 -- The wheel to a group of the bar's keys.
@@ -2225,6 +2235,12 @@ end
 function TouchControls_NextGroup()
     if nextGroup then
         ShowGroup(nextGroup)
+    end
+end
+
+function TouchControls_PrevGroup()
+    if prevGroup then
+        ShowGroup(prevGroup)
     end
 end
 
@@ -2344,7 +2360,8 @@ local function EnsureBindings()
 
         for key, action in pairs({ F18 = "TOUCHCONTROLS_INTERACT", F14 = "TOUCHCONTROLS_TARGETNONHOSTILE", F15 = "TOUCHCONTROLS_TOGGLE", F16 = "TOUCHCONTROLS_MENU", F17 = "TOUCHCONTROLS_NEXTGROUP", F19 = "TOUCHCONTROLS_BAGS",
             ["CTRL-F14"] = "TOUCHCONTROLS_DISMOUNT", ["CTRL-F15"] = "TOUCHCONTROLS_FOLLOW", ["CTRL-F16"] = "TOUCHCONTROLS_RADIAL",
-            ["CTRL-F17"] = "TOUCHCONTROLS_ASSIGN", ["CTRL-F18"] = "TOUCHCONTROLS_MODIFIER", ["CTRL-F19"] = "TOUCHCONTROLS_EMOTES" }) do
+            ["CTRL-F17"] = "TOUCHCONTROLS_ASSIGN", ["CTRL-F18"] = "TOUCHCONTROLS_MODIFIER", ["CTRL-F19"] = "TOUCHCONTROLS_EMOTES",
+            ["CTRL-SHIFT-F17"] = "TOUCHCONTROLS_PREVGROUP" }) do
             if not GetBindingKey(action) and (GetBindingAction(key) or "") == "" then
                 SetBinding(key, action)
             end
@@ -2644,7 +2661,7 @@ local HELP = {
     } },
     { title = "Spells and the wheel", text = {
         "The buttons around jump are your action bar. |cffffd200Tap|r one to use it.",
-        "|cffffd200The number button|r in the corner turns to the next page of your bar: 1, 2, 3... and back to 1.",
+        "|cffffd200The number button|r in the corner turns to the next page of your bar: 1, 2, 3... and back to 1. Hold it to go back a page.",
         "|cffffd200Put a spell on a button|r: hold the button. The spellbook opens; tap the spell you want there, or |cffffd200Clear button|r at its top to empty it.",
         "You can also drag a spell or item from the spellbook or your bags and drop it on a button.",
         "|cffffd200Lock buttons|r (in the menu) stops a long press from opening the spellbook.",
@@ -3106,7 +3123,7 @@ addon:SetScript("OnEvent", function(self, event, name)
         PlaceChat()
     elseif event == "ACTIONBAR_PAGE_CHANGED" then
         -- To the group the page button was going to, or the page's first.
-        local group = pendingPage == GetActionBarPage() and pendingGroup or 1
+        local group = pendingGroups[GetActionBarPage()] or 1
         wheelOffset = (group - 1) * db.wheelCount
         SetWheelKeys()
         UpdatePage()

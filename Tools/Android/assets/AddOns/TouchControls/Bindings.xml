@@ -14,6 +14,9 @@
 	<Binding name="TOUCHCONTROLS_NEXTGROUP">
 		TouchControls_NextGroup()
 	</Binding>
+	<Binding name="TOUCHCONTROLS_PREVGROUP">
+		TouchControls_PrevGroup()
+	</Binding>
 	<Binding name="TOUCHCONTROLS_BAGS">
 		OpenAllBags()
 	</Binding>

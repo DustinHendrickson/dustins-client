@@ -213,6 +213,7 @@ float s_pinchDistance;
 // The game's answer to "what is under the mouse": AndroidInputPoint.
 int32_t (*s_pointQuery)();
 bool (*s_uiAtPointQuery)(float x, float y);
+bool (*s_uiOverControlsQuery)(float x, float y);
 
 // Camera drag: relative mouse movement per pixel the finger moves, and whether up and down are swapped (the
 // add-on's options, AndroidInputSetCamera).
@@ -480,7 +481,8 @@ void BeginPinch(Finger& first, Finger& second) {
     s_pinchDistance = PinchDistance();
 }
 
-// The control a point is in, the last set winning where they overlap (the add-on sets them back to front).
+// The control a point is in, the last set winning where they overlap (the add-on sets them back to front). None where
+// a window drawn over the controls takes the mouse there: the finger is the UI's.
 const Control* ControlAt(const C2iVector& point) {
     if (!s_contentWidth || !s_contentHeight) {
         return nullptr;
@@ -500,6 +502,10 @@ const Control* ControlAt(const C2iVector& point) {
                 if (dx * dx + dy * dy > radius * radius) {
                     continue;
                 }
+            }
+
+            if (!(control->flags & AndroidInputControl_OnTop) && s_uiOverControlsQuery && s_uiOverControlsQuery(x, y)) {
+                return nullptr;
             }
 
             return &*control;
@@ -1672,6 +1678,10 @@ uint32_t AndroidInputGetLatch() {
 
 void AndroidInputSetUiAtPointQuery(bool (*query)(float x, float y)) {
     s_uiAtPointQuery = query;
+}
+
+void AndroidInputSetUiOverControlsQuery(bool (*query)(float x, float y)) {
+    s_uiOverControlsQuery = query;
 }
 
 void AndroidInputSetCamera(float speed, bool invert) {

@@ -135,6 +135,34 @@ bool UiAtPoint(float x, float y) {
     return false;
 }
 
+// Whether a frame that takes the mouse is drawn over the touch controls at a point (fractions of the screen): one in a
+// stratum above theirs (the add-on's buttons are LOW), as a window from the game or an add-on is.
+bool UiOverControls(float x, float y) {
+    CSimpleTop* top = CSimpleTop::GetInstance();
+
+    if (!top) {
+        return false;
+    }
+
+    C2Vector pt;
+    NDCToDDC(x, y, &pt.x, &pt.y);
+    CSimpleFrame* world = CGWorldFrame::s_currentWorldFrame;
+
+    for (int32_t strata = FRAME_STRATA_TOOLTIP; strata > FRAME_STRATA_LOW; strata--) {
+        CSimpleSortedArray<FRAMEPRIORITY*>& queue = top->m_eventqueue[SIMPLE_EVENT_MOUSE][strata];
+
+        for (uint32_t i = 0; i < queue.m_count; i++) {
+            CSimpleFrame* frame = queue.m_array[i] ? queue.m_array[i]->m_frame : nullptr;
+
+            if (frame && frame != world && frame->m_isVisible && frame->TestHitRect(pt)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 // Whether the focused text box has several lines (CSimpleEditBox's multi-line flag).
 bool FocusIsMultiLine() {
     CSimpleEditBox* box = CSimpleEditBox::s_currentFocus;
@@ -241,7 +269,8 @@ int32_t Script_TouchControls_SetControl(lua_State* L) {
         return 0;
     }
 
-    // Flags: "round" (the circle in the area), "lift" (pressed on the finger's lift).
+    // Flags: "round" (the circle in the area), "lift" (pressed on the finger's lift), "top" (on a window of its own,
+    // which the UI under it doesn't cover).
     const char* options = lua_tostring(L, 7);
     uint32_t flags = 0;
 
@@ -251,6 +280,10 @@ int32_t Script_TouchControls_SetControl(lua_State* L) {
 
     if (options && strstr(options, "lift")) {
         flags |= AndroidInputControl_OnLift;
+    }
+
+    if (options && strstr(options, "top")) {
+        flags |= AndroidInputControl_OnTop;
     }
 
     // A key pressed instead when the finger stays still on the control a moment (the "lift" kind).
@@ -446,6 +479,7 @@ void TouchControlsInitialize() {
     AndroidInputSetPointQuery(PointUnderMouse);
     AndroidInputSetWheelQuery(WheelUnderMouse);
     AndroidInputSetUiAtPointQuery(UiAtPoint);
+    AndroidInputSetUiOverControlsQuery(UiOverControls);
     AndroidInputSetMultiLineQuery(FocusIsMultiLine);
 }
 
