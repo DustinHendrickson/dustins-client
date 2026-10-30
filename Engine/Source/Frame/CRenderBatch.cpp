@@ -19,8 +19,10 @@ static int32_t SortByTexture(const void* elem1, const void* elem2) {
     const CSimpleBatchedMesh* mesh1 = static_cast<const CSimpleBatchedMesh*>(elem1);
     const CSimpleBatchedMesh* mesh2 = static_cast<const CSimpleBatchedMesh*>(elem2);
 
+    // Pointers are compared, not subtracted: on 64-bit a difference doesn't fit the int32_t result, and the order
+    // qsort is given would be inconsistent.
     if (mesh1->m_textureID != mesh2->m_textureID) {
-        return static_cast<int32_t>(reinterpret_cast<uintptr_t>(mesh1->m_textureID) - reinterpret_cast<uintptr_t>(mesh2->m_textureID));
+        return reinterpret_cast<uintptr_t>(mesh1->m_textureID) < reinterpret_cast<uintptr_t>(mesh2->m_textureID) ? -1 : 1;
     }
 
     int32_t alphaMode1 = (mesh1->m_color && mesh1->m_alphaMode < GxBlend_Alpha) ? GxBlend_Alpha : mesh1->m_alphaMode;
@@ -30,7 +32,11 @@ static int32_t SortByTexture(const void* elem1, const void* elem2) {
         return alphaMode1 - alphaMode2;
     }
 
-    return static_cast<int32_t>(reinterpret_cast<uintptr_t>(mesh1->m_shader) - reinterpret_cast<uintptr_t>(mesh2->m_shader));
+    if (mesh1->m_shader == mesh2->m_shader) {
+        return 0;
+    }
+
+    return reinterpret_cast<uintptr_t>(mesh1->m_shader) < reinterpret_cast<uintptr_t>(mesh2->m_shader) ? -1 : 1;
 }
 
 // VERIFY: 2cc3a1bc auto
