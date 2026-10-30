@@ -1,4 +1,5 @@
 #include "GameUI.h"
+#include "WoW/Source/Ui/FrameRateOptions.h"
 #include "WoW/Source/DB/Rec/FileDataRec.h"
 #include "WoW/Source/DB/Rec/MovieFileDataRec.h"
 #include "WoW/Source/DB/Rec/MovieRec.h"
@@ -1808,6 +1809,7 @@ void CGGameUI::InitializeFrameXML() {
     }
 
     BugReportRegister();
+    FrameRateOptionsCreate();
     LoadAddOns(&status);
     FrameXML_RegisterLoadProgressCallback(nullptr, nullptr, 0);
     CGGameUI::Initialize();

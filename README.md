@@ -62,6 +62,13 @@ the Windows code. The macOS, Switch and Android ports are in this fork
 - **Warden off:** Warden's modules are 32-bit Windows code. The x64 Windows build, macOS, the Switch and Android
   don't run them, so use a server with Warden turned off.
 
+### On every platform
+
+- **Frame rate:** Video options has a **Frame Rate** page with a maximum frame rate (30, 60, 90, 120, 144, 200 or
+  unlimited) and a separate cap for while the game window isn't active. They set the `maxFPS` and `maxFPSBk`
+  console settings. The display's refresh rate is still the most you will see; on Android and the Switch the
+  battery saver's 30 fps also still applies.
+
 ### Getting the source
 
 ```bash
