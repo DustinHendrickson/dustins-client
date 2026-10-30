@@ -59,6 +59,24 @@ static void AsyncFileReadFreeNear(CAsyncObject* object) {
 }
 #endif
 
+// A model's data, which its .anim and vertex buffers are placed near (OsAllocNear). On macOS an ordinary allocation
+// has no room near it, so the data comes from OsAllocNearBase.
+static M2Data* AllocModelData(uint32_t size) {
+#if defined(WOWDECOMP_ARCH_64) && defined(__APPLE__)
+    return static_cast<M2Data*>(OsAllocNearBase(size));
+#else
+    return static_cast<M2Data*>(SIMD::AllocA16(size, __FILE__, __LINE__));
+#endif
+}
+
+static void FreeModelData(M2Data* data) {
+#if defined(WOWDECOMP_ARCH_64) && defined(__APPLE__)
+    OsFreeNear(data);
+#else
+    SIMD::FreeA16(data);
+#endif
+}
+
 // VERIFY: d89467e7 manual
 // OFFSET: 0x00835970
 uint32_t CM2Shared::AddRef() {
@@ -876,9 +894,9 @@ void CM2Shared::ConvertTextureValuesToCombos() {
 
     if (comboBytes || transformBytes) {
         uint32_t size = (this->m_fileSize + 15) & ~15u;
-        M2Data* data = static_cast<M2Data*>(SIMD::AllocA16(size + comboBytes + transformBytes, __FILE__, __LINE__));
+        M2Data* data = AllocModelData(size + comboBytes + transformBytes);
         memcpy(data, this->m_data, this->m_fileSize);
-        SIMD::FreeA16(this->m_data);
+        FreeModelData(this->m_data);
         this->m_data = data;
         this->m_fileSize = size + comboBytes + transformBytes;
         uint8_t* tail = reinterpret_cast<uint8_t*>(data) + size;
@@ -1791,7 +1809,7 @@ CM2SequenceLoad::~CM2SequenceLoad() {
 int32_t CM2Shared::Load(SFileImpl* file, int32_t flags, CAaBox* boundingBox) {
     this->m_flags = (this->m_flags & ~4u) | (flags ? 4 : 0);
     this->m_fileSize = SFileGetFileSize(file, nullptr);
-    this->m_data = static_cast<M2Data*>(SIMD::AllocA16(this->m_fileSize, __FILE__, __LINE__));
+    this->m_data = AllocModelData(this->m_fileSize);
 
     if (!this->m_data) {
         return 0;
@@ -1852,7 +1870,12 @@ CM2Shared::~CM2Shared() {
     int32_t pending = 0;
 
     if (this->m_asyncObject) {
+#if defined(WOWDECOMP_ARCH_64) && defined(__APPLE__)
+        // Before the skin profile is read, the read in flight is the model's data.
+        pending = !AsyncFile::Cancel(this->m_asyncObject, this->m_skinData ? AsyncFileReadFreeA16 : AsyncFileReadFreeNear);
+#else
         pending = !AsyncFile::Cancel(this->m_asyncObject, AsyncFileReadFreeA16);
+#endif
     }
 
     if (this->m_cache) {
@@ -1928,7 +1951,7 @@ CM2Shared::~CM2Shared() {
 #endif
 
     if (!pending) {
-        SIMD::FreeA16(this->m_data);
+        FreeModelData(this->m_data);
     }
 }
 
